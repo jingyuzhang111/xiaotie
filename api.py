@@ -6,6 +6,8 @@ from msgbase import Msgbase
 from mongodb import *
 from split import text_split
 from logger import get_module_logger
+import time
+from mood import moodupdater
 
 logger = get_module_logger('api')
 
@@ -19,7 +21,7 @@ client = OpenAI(
 )
 
 def chat_stream(content,prompt: str = None):
-
+    start_time = time.time()
     response =client.chat.completions.create(
         model="deepseek-ai/DeepSeek-V3.2-Exp",  # 选择模型
         messages=[
@@ -28,11 +30,13 @@ def chat_stream(content,prompt: str = None):
             {"role": "user", "content": f"{content}"},
         ],
         stream=False,
-        temperature=0.7,
+        temperature=0.7,# 随机性，越大越活泼，也更不知所云
         max_tokens=5000,
         top_p=0.9,
 
     )
+    delta_time = time.time() - start_time
+    logger.info(f"调用deepseek时间: {delta_time}")
     if hasattr(response, 'usage'):
         usage = response.usage
         print(f"Prompt Tokens: {usage.prompt_tokens}")
@@ -51,7 +55,9 @@ def create_response(name,content,chat_stream,group_name,):
     return resMsg
 
 def msg_process(msg):
+    """处理消息的主方法，所有方法都在这里集成"""
     msg = Msgbase(msg)
+    moodupdater.update_in_msgloop(msg)
     db_add(msg)
     prompt = create_prompt(msg)
     res_chatstream = msg.chat_stream

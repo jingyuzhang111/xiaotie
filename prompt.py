@@ -2,6 +2,7 @@ from mongodb import generate_history_dialog
 from msgbase import Msgbase
 from logger import get_module_logger
 from datetime import datetime
+from mood import moodupdater
 
 logger = get_module_logger("prompt")
 
@@ -15,7 +16,7 @@ def create_prompt(new_msg:Msgbase):
     回答不要携带括号，不要添加emoji和颜文字，回答尽量模仿网友，尽量简短，下面是我们之前的对话：
     {history_content}
     现在的时间是{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-    你现在是网友小贴，给出回复吧
+    你现在是网友小贴，给出回复吧，语言不要加换行符号，多一点点短句
     """
     logger.info(prompt)
     return prompt

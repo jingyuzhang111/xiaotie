@@ -1,12 +1,16 @@
 from datetime import datetime
+import time
+import threading
 from config import *
 from typing import Dict, Optional
+from collections import deque
 import hashlib
+from observer import msg_subject,time_obsever
+from abc import ABC, abstractmethod
 import sys
 import io
 import json
 from logger import get_module_logger
-
 
 class Msgbase:
     def __init__(self, msg: Optional[Dict]):
@@ -15,7 +19,7 @@ class Msgbase:
         self.content = msg['content']
         self.chat_stream = msg['chat_stream']
         self.group_name = msg['group_name']
-        self.timestamp = int(datetime.now().timestamp())
+        self.timestamp = time.time()
         self.time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.chat_plat = CHAT_PLAT
         self.value = {
@@ -27,7 +31,7 @@ class Msgbase:
             'chat_plat': self.chat_plat,
             'group_name': self.group_name,
         }
-
+        msg_subject.notify_observers(self)
     @staticmethod
     def string_to_hash(text, algorithm='md5'):
         """字符串转哈希"""
@@ -48,3 +52,19 @@ class ResPonse(Msgbase):
         super().__init__(msg)
         self.response = response
         self.Msg = Msgbase(msg)
+
+
+if __name__ == '__main__':
+    m1 = Msgbase({
+        "name":1,
+        "content":2,
+    })
+    m2 = Msgbase({
+        "name": 1,
+        "content": 2,
+    })
+    m3 = Msgbase({
+        "name": 1,
+        "content": 2,
+    })
+    print(time_obsever.get_timelist())
