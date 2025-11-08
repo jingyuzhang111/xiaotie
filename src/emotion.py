@@ -49,11 +49,11 @@ import openai
 import json
 from typing import Dict,List,Tuple
 import time
-from mongodb import *
+from src.mongodb import *
 from openai.resources.containers.files import content
 
-from config import *
-from logger import get_module_logger
+from src.config import *
+from src.logger import get_module_logger
 
 logger = get_module_logger('emotion')
 

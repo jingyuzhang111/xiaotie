@@ -3,17 +3,16 @@ import time
 import numpy as np
 from datetime import datetime
 import random
-from logger import get_module_logger
-from observer import time_obsever
-from config import *
-from mongodb import history_for_emo
-logger = get_module_logger("mood")
-from emotion import emotion_manager
-from msgbase import Msgbase
-from mongodb import update_friend
-from logger import get_module_logger
+from src.observer import time_obsever
+from src.config import *
+from src.emotion import emotion_manager
+from src.msgbase import Msgbase
+from src.mongodb import update_friend
 
-logger = get_module_logger("mood_updater")
+
+from src.logger import get_module_logger
+logger = get_module_logger("mood")
+
 
 class MoodUpdater():
     def __init__(self):
@@ -97,8 +96,6 @@ class MoodUpdater():
         # 最终限制本地值范围
         self._clamp_values()
 
-
-
     def get_delta_time(self):
         self.timenow = time.time()
         time_list = time_obsever.get_timelist()
@@ -116,7 +113,7 @@ class MoodUpdater():
             self.mood_value = -50
         elif self.mood_value > 50:
             self.mood_value = 50
-        elif abs(self.mood_value) < 1e-5:
+        elif abs(self.mood_value) < 1e-3:
             self.mood_value = 0
 
 

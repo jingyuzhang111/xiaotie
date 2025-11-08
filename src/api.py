@@ -1,13 +1,11 @@
 from openai import OpenAI
-from prompt import create_prompt
-import sys
-import io
-from msgbase import Msgbase
+from src.LLM.prompt import create_prompt
 from mongodb import *
 from split import text_split
-from logger import get_module_logger
+from src.logger import get_module_logger
 import time
 from mood import moodupdater
+from msgbase import Response, FriendMsg
 
 logger = get_module_logger('api')
 
@@ -45,7 +43,7 @@ def chat_stream(content,prompt: str = None):
     content = response.choices[0].message.content
     return content
 
-def create_response(name,content,chat_stream,group_name,):
+def create_response_format(name,content,chat_stream,group_name,):
     resMsg = {
         "name": name,
         "content": content,
@@ -56,22 +54,19 @@ def create_response(name,content,chat_stream,group_name,):
 
 def msg_process(msg):
     """处理消息的主方法，所有方法都在这里集成"""
-    msg = Msgbase(msg)
-    moodupdater.update_in_msgloop(msg)
-    db_add(msg)
-    prompt = create_prompt(msg)
-    res_chatstream = msg.chat_stream
-    res_groupname = msg.group_name
-    res_name = BOT_NAME
+    logger.info("进入消息处理函数")
+    fri_msg = FriendMsg(msg)
+    resmsg = Response(msg=fri_msg)
+    moodupdater.update_in_msgloop(fri_msg)
+    db_add(fri_msg)
+    prompt = create_prompt(fri_msg)
 
-    response = chat_stream(msg.content,prompt)
+    response = chat_stream(fri_msg.content,prompt)
+    resmsg.alter_response(response)
+    db_add(resmsg)
     response_split = text_split(response)
     logger.info(response_split)
-    for res in response_split:
-        res_dict = create_response(res_name,res,
-                                   res_chatstream,res_groupname,)
-        res = Msgbase(res_dict)
-        db_add(res)
+
     return response_split
 
 

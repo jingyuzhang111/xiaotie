@@ -6,8 +6,8 @@ from mongodb import *
 import time
 import threading
 from config import *
-from msgbase import Msgbase
-from logger import get_module_logger
+from src.msgbase import Msgbase
+from src.logger import get_module_logger
 from mood import moodupdater
 import os
 
@@ -76,6 +76,10 @@ def handle_message(data):
     logger.info(f"发送消息:{responses}")
     # 主动发送回复
     for response in responses:
+        """
+        电脑内部端的response格式只需要文本
+        对于微信端，预留接口。
+        """
         emit('message', response, broadcast=False)
 
 @app.route('/')

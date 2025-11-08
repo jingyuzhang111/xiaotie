@@ -1,7 +1,7 @@
 from datetime import datetime
 import time
 import threading
-from config import *
+from src.config import *
 from typing import Dict, Optional
 from collections import deque
 import hashlib
@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 import sys
 import io
 import json
-from logger import get_module_logger
+from src.logger import get_module_logger
 
 
 class MessageObserver(ABC):

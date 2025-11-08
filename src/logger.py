@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-logger.remove()
+logger_initialized = False
+_handler_registry = {}
+
 
 class LogConfig:
     def __init__(self, **kwargs):
@@ -28,16 +30,6 @@ class LogConfig:
         self.config.update(kwargs)
 
 
-MONGODB_STYLE_CONFIG=LogConfig(
-    console_format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-    "<level>{level: <8}</level> | "
-    "<fg #339af0>数据库消息</fg #339af0> | "
-    "<level>{message}</level>",
-    file_format="{time:YYYY-MM-DD HH:mm:ss} | 数据库 | {level} | {message}",
-)
-
-
-
 config_dict = {
     "mongodb":LogConfig(
         console_format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
@@ -56,19 +48,31 @@ config_dict = {
 }
 
 
-_handler_registry = {}
+def ensure_logger_initialized():
+    """
+    只在第一次调用时清理全局 handlers（防止热重载/多次导入导致 handlers 丢失）
+    """
+    global logger_initialized   # 保证只运行一次
+    if not logger_initialized:
+        logger.remove() # 移除默认的 handler
+        logger_initialized = True
 
-def get_module_logger(module:str,config:Optional[LogConfig]=None):
 
-    if config is None and module in config_dict.keys():
-        config = config_dict[module]
-    # 默认部分
-    elif config is None:
-        config = LogConfig()
+def get_module_logger(module: str, config: Optional[LogConfig]=None):
 
+    ensure_logger_initialized()
+
+    # 获取配置
+    if config is None:
+        config = config_dict.get(module, LogConfig())
+
+    # 如果module已经添加过，先移除之前的handlers
     if module in _handler_registry:
         for handler in _handler_registry[module]:
-            logger.remove(handler)
+            try:
+                logger.remove(handler)
+            except Exception:
+                pass
         del _handler_registry[module]
 
     module_logger = logger.bind(module=module)
@@ -85,7 +89,7 @@ def get_module_logger(module:str,config:Optional[LogConfig]=None):
 
     log_dir = Path(config.config['log_dir'])
     log_dir.mkdir(exist_ok=True)
-    if module in config_dict.keys():
+    if module in config_dict:
         file_path = log_dir / module / "{time:YYYY-MM-DD}.log"
     else:
         file_path = log_dir / "other" / "{time:YYYY-MM-DD}.log"
@@ -94,8 +98,8 @@ def get_module_logger(module:str,config:Optional[LogConfig]=None):
     # YYYY-MM-DD-HH-mm-ss
     file_id = logger.add(
         sink=file_path,
-        level=config.config['console_level'],
-        format=config.config['console_format'],
+        level=config.config['file_level'],
+        format=config.config['file_format'],
         filter=lambda record: record["extra"].get("module") == module,
         enqueue=True,
         encoding="utf-8",

@@ -1,13 +1,13 @@
 from pymongo import MongoClient
 from datetime import datetime
-from config import *
+from src.config import *
 from typing import Dict,Optional
 import hashlib
 import sys
 import io
 import json
-from logger import get_module_logger
-from msgbase import Msgbase
+from src.logger import get_module_logger
+from src.msgbase import Msgbase, FriendMsg
 
 logger = get_module_logger("mongodb")
 logger.info('Connecting to MongoDB...')
@@ -18,12 +18,17 @@ client = MongoClient('mongodb://localhost:27017/')
 db = client['xiaotie']
 db_friend = db['friend']
 db_messages = db["messages"]
-def db_add(msg:Msgbase):
+def db_add(msg):
 	"""
 	data: dict,需要有键值content，name才行
 	"""
+	# 使用字符串类型检查，避免循环导入问题
+	if not hasattr(msg, '__class__') or msg.__class__.__name__ not in ['Msgbase', 'Response', 'FriendMsg']:
+		logger.info("db_add需要Msgbase类型的参数")
+		return
 	logger.debug(msg.value)
 	db_messages.insert_one(msg.value)
+	logger.info(f"消息已存入数据库, 来自:{msg.name}")
 	ensure_friend(msg.name)
 
 
@@ -46,6 +51,9 @@ def update_friend(name:str,favor_delta=0.0,relationship_delta=0.0):
 	friend = ensure_friend(name)
 	new_favor = friend['favor_ability'] + favor_delta
 	new_relationship = friend['relationship_value'] + relationship_delta
+
+	new_favor,new_relationship = clamp_values(new_favor,new_relationship)
+
 	db_friend.update_one(
 		{"name": name},
 		{"$set": {
@@ -56,14 +64,12 @@ def update_friend(name:str,favor_delta=0.0,relationship_delta=0.0):
 	return new_favor,new_relationship
 
 
-def generate_history_dialog(chat_stream):
-	history = db_messages.find({"chat_plat": CHAT_PLAT,
-								"chat_stream": chat_stream})
-	history_content = '\n'
-	for post in history:
-		one_piece = f"[{post['time']}] {post['name']}: {post['content']}\n"
-		history_content += one_piece
-	return history_content
+def clamp_values(favor,relationship):
+	"""限制好感度和关系值在一定范围内"""
+	favor = max(-10, min(10, favor))
+	relationship = max(0, min(100, relationship))
+	return favor, relationship
+
 
 def history_for_emo(name):
 	"""获取所有群的所有某人的信息，将消息合并进行情感分析"""
@@ -78,5 +84,11 @@ def history_for_emo(name):
 
 
 if __name__ == "__main__":
-	generate_history_dialog(0)
+	msg = FriendMsg({
+		"name": "测试用户",
+		"content": "这是一个测试消息",
+		"group_name": "测试群组",
+	})
+	db_add(msg)
+	pass
 
