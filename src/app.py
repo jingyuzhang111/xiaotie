@@ -1,14 +1,16 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from api import msg_process
-from mongodb import *
+from src.api import msg_process
+
+from mongostart import *
+_mongod_process = start_mongod()
+
+from src.mongodb import *
 import time
 import threading
-from config import *
-from src.msgbase import Msgbase
 from src.logger import get_module_logger
-from mood import moodupdater
+from src.mood import moodupdater
 import os
 
 
@@ -87,7 +89,13 @@ def index():
     return "WebSocket Server is Running!"
 
 
+def run_app():
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or os.environ.get('WERKZEUG_RUN_MAIN') is None:
+        start_mood_thread()
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000, use_reloader=False, log_output=False, allow_unsafe_werkzeug=True)
+
+
 if __name__ == '__main__':
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or os.environ.get('WERKZEUG_RUN_MAIN') is None:
         start_mood_thread()
-    socketio.run(app, debug=True, host='0.0.0.0', port=8001)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000, use_reloader=False, log_output=False)

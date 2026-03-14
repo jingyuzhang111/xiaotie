@@ -1,12 +1,14 @@
 from openai import OpenAI
 from src.LLM.prompt import create_prompt
-from mongodb import *
-from split import text_split
-from src.logger import get_module_logger
+from src.mongodb import *
+from src.split import text_split
 import time
-from mood import moodupdater
-from msgbase import Response, FriendMsg
+from src.mood import moodupdater
+from src.msgbase import Response, FriendMsg
+from globalcontrol import global_control
+from ProcessAudio.readaudio import global_speaker
 
+from src.logger import get_module_logger
 logger = get_module_logger('api')
 
 api_key = 'sk-uvsmlcbwngsfyrfusxebvlzageqpfpoatfgcasdvzbxmlgmk'
@@ -55,7 +57,11 @@ def create_response_format(name,content,chat_stream,group_name,):
 def msg_process(msg):
     """处理消息的主方法，所有方法都在这里集成"""
     logger.info("进入消息处理函数")
+
+    # 接收消息，转为消息类
     fri_msg = FriendMsg(msg)
+
+    # 创建响应消息类
     resmsg = Response(msg=fri_msg)
     moodupdater.update_in_msgloop(fri_msg)
     db_add(fri_msg)
@@ -64,7 +70,13 @@ def msg_process(msg):
     response = chat_stream(fri_msg.content,prompt)
     resmsg.alter_response(response)
     db_add(resmsg)
-    response_split = text_split(response)
+
+    response_split = [response]
+    if global_control.split:
+        response_split = text_split(response)
+    if global_control.speak:
+        global_speaker.speak(response)
+
     logger.info(response_split)
 
     return response_split

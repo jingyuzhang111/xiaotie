@@ -1,0 +1,69 @@
+import os
+import subprocess
+import time
+import sys
+
+
+def get_base_dir():
+    """Return base directory where bundled data are located.
+
+    - When running under PyInstaller onefile, files added via `--add-data` are
+      extracted to `sys._MEIPASS` (and `sys.frozen` is True).
+    - In development, use the directory of this source file.
+    - As a fallback (rare), use dirname(sys.executable).
+    """
+    if getattr(sys, 'frozen', False):
+        return getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+base_dir = get_base_dir()
+
+# 拼接mongod.exe和local_db的路径（在打包时通过 --add-data 放到 other/ 下）
+mongod_path = os.path.join(base_dir, 'other', 'mongod.exe')
+local_db_path = os.path.join(base_dir, 'other', 'local_db')
+
+
+def start_mongod():
+    if not os.path.exists(mongod_path):
+        print(f"mongod 未找到: {mongod_path}")
+        return False
+    if not os.path.exists(local_db_path):
+        print(f"local_db 目录未找到 (将尝试自动创建): {local_db_path}")
+        try:
+            os.makedirs(local_db_path, exist_ok=True)
+        except Exception as e:
+            print(f"创建 local_db 失败: {e}")
+            return False
+
+    try:
+        proc = subprocess.Popen(
+            [mongod_path, '--dbpath', local_db_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        time.sleep(2)
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().decode(errors='ignore') if proc.stderr else ''
+            print(f"mongod 启动失败，进程退出: {stderr}")
+            return False
+        print("mongod 启动成功")
+        return True
+    except Exception as e:
+        print(f"启动 mongod 发生异常: {e}")
+        return False
+
+
+if __name__ == "__main__":
+    started = start_mongod()
+    if not started:
+        sys.exit(1)
+    import src.app
+    src.app.run_app()
+
+import src.app
+
+
+
+if __name__ == "__main__":
+    src.app.run_app()

@@ -1,13 +1,32 @@
 from src.mongodb import *
 from src.logger import get_module_logger
-# from recalltimestamp import MemoryBuildScheduler
+from src.memory.recalltimestamp import MemoryBuildScheduler
 logger = get_module_logger("memory")
+
+def find_closest_chat(length, timestamp):
+    closest_chat = db_messages.find_one(
+        {"chat_plat": CHAT_PLAT, "timestamp": {"$lte": timestamp}},
+        sort=[("timestamp", -1)])
+    if closest_chat:
+        closest_timestamp = closest_chat["timestamp"]
+        chats = db_messages.find(
+            {"chat_plat": CHAT_PLAT,
+                "timestamp": {"$gte": closest_timestamp},
+             "chat_stream": closest_chat["chat_stream"],
+             }).sort("timestamp", 1).limit(length)
+        return list(chats)
+    return []
+
+def memory_process():
+    pass
+
 
 class MemoryManager():
     def __init__(self):
         pass
 
     def generate_history_dialog(self, chat_stream, limit=20):
+        """ 获取时间最近的（limit）条历史消息 """
         history = db_messages.find({"chat_plat": CHAT_PLAT,
                                     "chat_stream": chat_stream}).limit(limit)
         history.sort("timestamp", -1)
@@ -39,3 +58,23 @@ logger.info(f"{[memory["timestamp"] for memory in memories] }")
 
 if __name__ == "__main__":
     print(memory_manager.generate_history_dialog("277f2c7aef6b4df267063467cfbff5b1"))
+
+    chats = find_closest_chat(1, 1763535553)
+    print("chats:", chats)
+
+
+    scheduler = MemoryBuildScheduler(
+        n_hours1=3,  # 第一个分布均值（12小时前）
+        std_hours1=8,  # 第一个分布标准差
+        weight1=0.7,  # 第一个分布权重 70%
+        n_hours2=36,  # 第二个分布均值（36小时前）
+        std_hours2=24,  # 第二个分布标准差
+        weight2=0.3,  # 第二个分布权重 30%
+        total_samples=50,  # 总共生成50个时间点
+    )
+    timestamps = scheduler.generate_time_samples()
+    timestamps = [timestamps[i].timestamp() for i in range(len(timestamps))]
+    print(timestamps)
+    for timestamp in timestamps:
+        chats = find_closest_chat(1, timestamp)
+        print("chats:", chats)
