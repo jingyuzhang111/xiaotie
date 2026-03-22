@@ -19,7 +19,7 @@ class MessageObserver(ABC):
         pass
 
 
-class TimeObsever():
+class TimeObsever(MessageObserver):
     def __init__(self,max_size = 20):
         self._lock = threading.RLock()
         self.timelist = deque(maxlen=max_size)  # 双端队列，在两端操作数据非常快

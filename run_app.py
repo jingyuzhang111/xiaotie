@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 import sys
+import socket
 
 
 def get_base_dir():
@@ -24,7 +25,20 @@ mongod_path = os.path.join(base_dir, 'other', 'mongod.exe')
 local_db_path = os.path.join(base_dir, 'other', 'local_db')
 
 
+def is_port_open(host='127.0.0.1', port=27017, timeout=0.5):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def start_mongod():
+    # 若本机已有 MongoDB 在默认端口运行，直接复用，避免重复拉起导致启动失败。
+    if is_port_open():
+        print("检测到 MongoDB 已在 127.0.0.1:27017 运行，跳过启动")
+        return True
+
     if not os.path.exists(mongod_path):
         print(f"mongod 未找到: {mongod_path}")
         return False
@@ -44,6 +58,10 @@ def start_mongod():
         )
         time.sleep(2)
         if proc.poll() is not None:
+            # 进程已退出，但端口可用，通常表示已有实例在运行。
+            if is_port_open():
+                print("MongoDB 已可用，继续启动 Flask")
+                return True
             stderr = proc.stderr.read().decode(errors='ignore') if proc.stderr else ''
             print(f"mongod 启动失败，进程退出: {stderr}")
             return False
@@ -59,11 +77,4 @@ if __name__ == "__main__":
     if not started:
         sys.exit(1)
     import src.app
-    src.app.run_app()
-
-import src.app
-
-
-
-if __name__ == "__main__":
     src.app.run_app()

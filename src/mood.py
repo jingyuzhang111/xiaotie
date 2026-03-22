@@ -64,7 +64,7 @@ class MoodUpdater():
 
         # 情感分析部分：
         emotion_manager.LLM_get_emotion(content)
-        positive,negative,neutral,total = emotion_manager.emotion_analyze_basic()
+        positive,negative,neutral,total = emotion_manager.emotion_analyze_basic() # type: ignore
         mood_delta = (positive - negative) / MOOD_INFLUENCE_FACTOR
 
         self.mood_value += mood_delta * 5

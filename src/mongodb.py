@@ -18,6 +18,8 @@ client = MongoClient('mongodb://localhost:27017/')
 db = client['xiaotie']
 db_friend = db['friend']
 db_messages = db["messages"]
+db_memory_nodes = db["memory_nodes"]
+db_memory_edges = db["memory_edges"]
 def db_add(msg):
 	"""
 	data: dict,需要有键值content，name才行
@@ -81,6 +83,7 @@ def history_for_emo(name):
 		history_content += one_piece
 		history_content += "\n"
 	return history_content
+
 
 
 if __name__ == "__main__":

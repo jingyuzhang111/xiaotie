@@ -13,7 +13,7 @@ class GlobalControl:
         # 是否分割消息
         self.split = True
         # 是否启用GPT_Sovits有声朗读
-        self.speak = True
+        self.speak = False
 
 
 global_control = GlobalControl()

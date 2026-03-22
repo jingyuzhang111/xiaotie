@@ -4,9 +4,11 @@ import os
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+import threading
 
 logger_initialized = False
 _handler_registry = {}
+_logger_lock = threading.RLock()
 
 
 class LogConfig:
@@ -53,63 +55,65 @@ def ensure_logger_initialized():
     只在第一次调用时清理全局 handlers（防止热重载/多次导入导致 handlers 丢失）
     """
     global logger_initialized   # 保证只运行一次
-    if not logger_initialized:
-        logger.remove() # 移除默认的 handler
-        logger_initialized = True
+    with _logger_lock:
+        if not logger_initialized:
+            logger.remove() # 移除默认的 handler
+            logger_initialized = True
 
 
 def get_module_logger(module: str, config: Optional[LogConfig]=None):
-
     ensure_logger_initialized()
 
-    # 获取配置
-    if config is None:
-        config = config_dict.get(module, LogConfig())
+    with _logger_lock:
+        # 获取配置
+        if config is None:
+            config = config_dict.get(module, LogConfig())
 
-    # 如果module已经添加过，先移除之前的handlers
-    if module in _handler_registry:
-        for handler in _handler_registry[module]:
-            try:
-                logger.remove(handler)
-            except Exception:
-                pass
-        del _handler_registry[module]
+        # 如果module已经添加过，先移除之前的handlers
+        if module in _handler_registry:
+            for handler in _handler_registry[module]:
+                try:
+                    logger.remove(handler)
+                except Exception:
+                    pass
+            del _handler_registry[module]
 
-    module_logger = logger.bind(module=module)
-    handler_ids = []
+        module_logger = logger.bind(module=module)
+        handler_ids = []
 
-    console_id = logger.add(
-        sink=sys.stderr,
-        level=config.config['console_level'],
-        format=config.config['console_format'],
-        filter=lambda record: record["extra"].get("module") == module,
-        enqueue=True,
-    )
-    handler_ids.append(console_id)
+        console_id = logger.add(
+            sink=sys.stderr,
+            level=config.config['console_level'],
+            format=config.config['console_format'],
+            filter=lambda record: record["extra"].get("module") == module,
+            enqueue=True,
+        )
+        handler_ids.append(console_id)
 
-    log_dir = Path(config.config['log_dir'])
-    log_dir.mkdir(exist_ok=True)
-    if module in config_dict:
-        file_path = log_dir / module / "{time:YYYY-MM-DD}.log"
-    else:
-        file_path = log_dir / "other" / "{time:YYYY-MM-DD}.log"
-    file_path.parent.mkdir(exist_ok=True)
+        log_dir = Path(config.config['log_dir'])
+        log_dir.mkdir(exist_ok=True)
+        if module in config_dict:
+            file_path = log_dir / module / "{time:YYYY-MM-DD}.log"
+        else:
+            file_path = log_dir / "other" / "{time:YYYY-MM-DD}.log"
+        file_path.parent.mkdir(exist_ok=True)
 
-    # YYYY-MM-DD-HH-mm-ss
-    file_id = logger.add(
-        sink=file_path,
-        level=config.config['file_level'],
-        format=config.config['file_format'],
-        filter=lambda record: record["extra"].get("module") == module,
-        enqueue=True,
-        encoding="utf-8",
-        rotation=config.config["rotation"],
-    )
-    handler_ids.append(file_id)
+        # YYYY-MM-DD-HH-mm-ss
+        # 文件配置
+        file_id = logger.add(
+            sink=file_path,
+            level=config.config['file_level'],
+            format=config.config['file_format'],
+            filter=lambda record: record["extra"].get("module") == module,
+            enqueue=True,
+            encoding="utf-8",
+            rotation=config.config["rotation"],
+        )
+        handler_ids.append(file_id)
 
-    _handler_registry[module] = handler_ids
+        _handler_registry[module] = handler_ids
 
-    return module_logger
+        return module_logger
 
 if __name__ == "__main__":
     logger = get_module_logger("mongodb")

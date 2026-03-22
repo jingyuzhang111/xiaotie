@@ -5,25 +5,27 @@ from src.split import text_split
 import time
 from src.mood import moodupdater
 from src.msgbase import Response, FriendMsg
-from globalcontrol import global_control
-from ProcessAudio.readaudio import global_speaker
+from src.globalcontrol import global_control
+from src.config import *
+from typing import Any
+
+if global_control.speak:
+    from src.plugins.ProcessAudio.readaudio import global_speaker
 
 from src.logger import get_module_logger
 logger = get_module_logger('api')
 
-api_key = 'sk-uvsmlcbwngsfyrfusxebvlzageqpfpoatfgcasdvzbxmlgmk'
-api_base = r'https://api.siliconflow.cn/v1/'
-LLM_ds = "deepseek-ai/DeepSeek-V3.2-Exp"
+
 
 client = OpenAI(
-    api_key=api_key,
-    base_url=api_base,
+    api_key=LLM_TEXT_KEY,
+    base_url=LLM_TEXT_URL,
 )
 
-def chat_stream(content,prompt: str = None):
+def chat_stream(content,prompt: str = ''):
     start_time = time.time()
     response =client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V3.2-Exp",  # 选择模型
+        model=LLM_TEXT_NAME,  # 选择模型
         messages=[
             {"role": "system",
              "content": f"{prompt}"},
@@ -33,15 +35,14 @@ def chat_stream(content,prompt: str = None):
         temperature=0.7,# 随机性，越大越活泼，也更不知所云
         max_tokens=5000,
         top_p=0.9,
-
     )
     delta_time = time.time() - start_time
     logger.info(f"调用deepseek时间: {delta_time}")
     if hasattr(response, 'usage'):
-        usage = response.usage
-        print(f"Prompt Tokens: {usage.prompt_tokens}")
-        print(f"Completion Tokens: {usage.completion_tokens}")
-        print(f"Total Tokens: {usage.total_tokens}")
+        usage:Any = response.usage
+        logger.info(f"Prompt Tokens: {usage.prompt_tokens}")
+        logger.info(f"Completion Tokens: {usage.completion_tokens}")
+        logger.info(f"Total Tokens: {usage.total_tokens}")
     content = response.choices[0].message.content
     return content
 
@@ -68,7 +69,7 @@ def msg_process(msg):
     prompt = create_prompt(fri_msg)
 
     response = chat_stream(fri_msg.content,prompt)
-    resmsg.alter_response(response)
+    resmsg.alter_response(response) # type: ignore
     db_add(resmsg)
 
     response_split = [response]

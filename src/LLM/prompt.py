@@ -7,12 +7,10 @@ from src.config import *
 
 logger = get_module_logger("prompt")
 
-logger.info("Prompt")
-
 
 def create_prompt(new_msg:Msgbase):
 
-    logger.info("Creating prompt...")
+    logger.debug("Creating prompt...")
 
     history_content = memory_manager.generate_history_dialog(chat_stream=new_msg.chat_stream)
     prompt = f"""
@@ -22,7 +20,30 @@ def create_prompt(new_msg:Msgbase):
     现在的时间是{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     你现在是{BOT_NAME}，给出回复吧，语言不要加换行符号，多一点点短句
     """
-    logger.info(prompt)
+    logger.debug(f"Prompt已生成，长度: {len(prompt)}")
 
     return prompt
 
+
+# structure导入的部分
+def create_prompt_for_sum(content:str):
+    sys_prompt = """
+你是对话记忆压缩器。请从给定对话中提取核心信息。
+要求：
+只输出一个 JSON 对象，不要输出任何解释、前后缀、代码块。
+JSON 必须包含字段：
+summary: 字符串，1-2句，中文，尽量具体，不要空话, 在开头附上具体日期,格式为:XXXX年XX月XX日。
+keywords: 字符串数组，2-4个关键词，去重，按重要性排序, 关键词要能够体现这一段话的主要内容或主题,或隐含着较为重要的信息,但类似日期XXXX年XX月XX日这种可有可无的前缀请忽略,关键词也尽量简略,尽量为不可拆分的重要词语。
+避免“这个/那个/感觉/哈哈”等低信息词。
+如果内容信息很少，也要给出最小可用结果。
+输出格式严格为：
+{
+"summary": "......",
+"keywords": ["...", "..."]
+}
+"""
+    user_prompt = f"""
+需要被总结的文本如下:
+{content}
+"""
+    return sys_prompt, user_prompt

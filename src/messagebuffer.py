@@ -5,11 +5,8 @@ from typing import Dict
 from collections import OrderedDict
 import threading
 from src.logger import get_module_logger
-import sys
 
 logger = get_module_logger("message_buffer")
-logger.remove()  # 移除所有handler
-logger.add(sys.stderr, level="WARNING")  # 只显示WARNING及以上级别
 
 
 @dataclass
