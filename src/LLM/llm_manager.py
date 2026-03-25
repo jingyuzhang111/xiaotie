@@ -27,7 +27,7 @@ def chat_stream(sys_prompt,user_prompt: str = ''):
         top_p=0.9,
     )
     delta_time = time.time() - start_time
-    logger.info(f"调用deepseek时间: {delta_time}")
+    logger.info(f"调用LLM时间: {delta_time}")
     if hasattr(response, 'usage'):
         usage:Any = response.usage
         logger.info(f"Prompt Tokens: {usage.prompt_tokens}")

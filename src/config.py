@@ -1,4 +1,7 @@
-# 用于搞配置，高级的咱不会(懒得学)，偷个懒直接py硬搞吧。
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BOT_NAME="小贴"
 
@@ -8,13 +11,13 @@ CHAT_PLAT="host"
 
 DATABASE_NAME='xiaotie'
 
-LLM_TEXT_URL='https://api.siliconflow.cn/v1/'
-LLM_TEXT_NAME="deepseek-ai/DeepSeek-V3.2-Exp"
-LLM_TEXT_KEY='sk-uvsmlcbwngsfyrfusxebvlzageqpfpoatfgcasdvzbxmlgmk'
+LLM_TEXT_URL=os.getenv('LLM_TEXT_URL')
+LLM_TEXT_NAME=os.getenv('LLM_TEXT_NAME')
+LLM_TEXT_KEY=os.getenv('LLM_TEXT_KEY')
 
-LLM_EMOTION_URL='https://api.siliconflow.cn/v1/'
-LLM_EMOTION_NAME='deepseek-ai/DeepSeek-V3.2-Exp'
-LLM_EMOTION_KEY='sk-uvsmlcbwngsfyrfusxebvlzageqpfpoatfgcasdvzbxmlgmk'
+LLM_EMOTION_URL=os.getenv('LLM_EMOTION_URL')
+LLM_EMOTION_NAME=os.getenv('LLM_EMOTION_NAME')
+LLM_EMOTION_KEY=os.getenv('LLM_EMOTION_KEY')
 
 
 

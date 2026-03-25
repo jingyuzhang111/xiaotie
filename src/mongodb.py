@@ -51,6 +51,9 @@ def ensure_friend(name):
 def update_friend(name:str,favor_delta=0.0,relationship_delta=0.0):
 	"""更新好友信息"""
 	friend = ensure_friend(name)
+	if not friend:
+		logger.error(f"无法找到好友{name}的信息")
+		return None
 	new_favor = friend['favor_ability'] + favor_delta
 	new_relationship = friend['relationship_value'] + relationship_delta
 
@@ -79,7 +82,7 @@ def history_for_emo(name):
 								'name':name})
 	history_content = ''
 	for post in history:
-		one_piece = f"{post["name"]}:{post['content']}"
+		one_piece = f"{post['name']}:{post['content']}"
 		history_content += one_piece
 		history_content += "\n"
 	return history_content

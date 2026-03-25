@@ -6,3 +6,4 @@ other/
 MyFlaskApp.spec
 build/
 src/images/srcs/
+.env

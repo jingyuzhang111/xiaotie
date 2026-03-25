@@ -14,7 +14,7 @@ from src.logger import get_module_logger
 from src.mood import moodupdater
 from src.memory.structure import net_manager
 import os
-
+from src.thread.threadmanager import thread_manager
 
 logger = get_module_logger("app")
 
@@ -25,55 +25,23 @@ CORS(app)   # 允许跨域请求
 # 初始化 SocketIO，允许跨域
 socketio = SocketIO(app,
                    cors_allowed_origins="*",
-                   logger=True,
+                   logger=False,
                    engineio_logger=False)
 
 # 存储连接的客户端（可选）
 connected_clients = {}
 
-# 心情更新线程
-def mood_update_loop():
-    """时间间隔更新心情"""
-    n=0
 
-    while True:
-        n=n+1
-        moodupdater.update_in_timeloop()
+def start_threads():
+    """启动所有线程"""
+    thread_manager.add_tasks(net_manager.memory_process, interval_sec=300)
+    thread_manager.add_tasks(moodupdater.update_in_timeloop, interval_sec=2)
+    thread_manager.start()
 
-        if n > 1:
-            logger.info(f"心情: {moodupdater.mood_value}   兴趣: {moodupdater.interest_value}")
-            n=0
-        time.sleep(5)
-
-def start_mood_thread():
-    """启动心情更新线程"""
-
-    thread = threading.Thread(target=mood_update_loop)
-    thread.daemon = True  # 设置为守护线程，这样主程序退出时该线程也会退出
-    thread.start()
-
-
-# 记忆网络更新线程
-def memory_update_loop():
-    """时间间隔更新记忆"""
-    n=0
-
-    while True:
-        n=n+1
-        net_manager.memory_process()
-
-        if n > 1:
-            logger.info(f"记忆更新完毕,现有节点{net_manager.nodenames}")
-            n=0
-        time.sleep(2)
-
-def start_memory_thread():
-    """启动记忆网络更新线程"""
-
-    thread = threading.Thread(target=memory_update_loop)
-    thread.daemon = True  # 设置为守护线程，这样主程序退出时该线程也会退出
-    thread.start()
-
+def restart_threads():
+    """重启所有线程"""
+    if thread_manager.is_alive():
+        thread_manager.restart()
 
 
 # WebSocket 事件处理
@@ -101,12 +69,15 @@ def handle_disconnect():
 
 @socketio.on('message')
 def handle_message(data):
-    logger.info(f'收到消息:{data}')
+    logger.debug(f'收到消息:{data}')
 
     # 处理消息
     responses = msg_process(data)
+    thread_manager.check_in_handle_message()
 
-    logger.info(f"发送消息:{responses}")
+
+
+    logger.debug(f"发送消息:{responses}")
     # 主动发送回复
     for response in responses:
         """
@@ -121,8 +92,9 @@ def index():
 
 def run_app():
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or os.environ.get('WERKZEUG_RUN_MAIN') is None:
-        start_mood_thread()
-        start_memory_thread()
+        start_threads()
+        restart_threads()
+        print(thread_manager.get_all_infos())
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, use_reloader=False, log_output=False, allow_unsafe_werkzeug=True)
 
 

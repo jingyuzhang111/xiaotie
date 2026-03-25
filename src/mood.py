@@ -29,7 +29,6 @@ class MoodUpdater():
         根据消息内容和数据库好感更新心情值，心情值改变prompt
         """
         # with self.mood_lock:
-
         self.get_delta_time()
         with self.mood_lock:
             if self.delta_time > 30:
@@ -51,7 +50,7 @@ class MoodUpdater():
 
     def update_in_msgloop(self, msg:Msgbase):
         """根据消息触发"""
-
+        
 
 
         name = msg.name

@@ -2,6 +2,9 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"path": "D:/demo/vue/vue-flask-deepseek"
 		}
 	],
 	"settings": {}

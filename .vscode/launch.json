@@ -1,18 +1,45 @@
 {
   "version": "0.2.0",
   "configurations": [
-    
     {
-      "name": "Backend: run_app.py",
-      "type": "python",
+      "name": "前端: Vue (Vite dev)",
+      "type": "node",
       "request": "launch",
+      "cwd": "D:/demo/vue/vue-flask-deepseek",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "前端: Browser (5173)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "D:/demo/vue/vue-flask-deepseek/src"
+    },
+    {
+      "name": "后端: run_app.py (Debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
       "program": "${workspaceFolder}/run_app.py",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "justMyCode": true,
+      "justMyCode": false,
+      "subProcess": false,
       "env": {
         "PYTHONUNBUFFERED": "1"
       }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "一起: Backend + Vue Dev",
+      "configurations": [
+        "后端: run_app.py (Debug)",
+        "前端: Vue (Vite dev)"
+      ]
     }
   ]
 }
