@@ -98,6 +98,7 @@ class FriendMsg(Msgbase):
             raise ValueError("FriendMsg 初始化失败，msg参数为None")
         self.name = msg['name']
         self.content = msg['content']
+
         super().__init__(msg, self.name, self.content)
 
 
@@ -148,6 +149,41 @@ class Response(Msgbase):
         """添加消息到回复类中"""
         self.Msgs.append(msg)
 
+    
+    def gather_from_name(self):
+        """
+        将消息按照名字进行字典存储与消息转换
+        格式:{
+        "name": time+contents
+        ...
+        }
+        主要用于分别分析不同人的情绪状态
+        """
+        name_dict = {}
+        for msg in self.Msgs:
+            if msg.name not in name_dict.keys():
+                name_dict[msg.name] = msg.content
+            else:
+                name_dict[msg.name] += "\n" + msg.content
+        return name_dict
+    
+    def get_strings(self):
+        """
+        将消息按照 姓名+内容 拼接为一条
+        """
+
+        contents = ""
+        for msg in self.Msgs:
+            contents += msg.name + ": " + msg.content + "\n"
+        return contents
+
+    def get_emotion_dict(self):
+        """专门给emotion的LLM吃的字符串"""
+        content_dict = {}
+        for msg in self.Msgs:
+            content_dict[msg.name] = msg.content
+        content_dict["总消息"] = self.get_strings()
+        return content_dict
 
 
 if __name__ == '__main__':

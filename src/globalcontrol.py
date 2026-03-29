@@ -14,6 +14,7 @@ class GlobalControl:
         self.split = True
         # 是否启用GPT_Sovits有声朗读
         self.speak = False
+        self.use_threadpool = True
 
 
 global_control = GlobalControl()

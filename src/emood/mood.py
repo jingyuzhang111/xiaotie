@@ -3,10 +3,10 @@ import time
 import numpy as np
 from datetime import datetime
 import random
-from src.observer import time_obsever
+from src.observer import buffer_time_observer
 from src.config import *
-from src.emotion import emotion_manager
-from src.msgbase import Msgbase
+from src.emood.emotion import emotion_manager
+from src.msgbase import Msgbase, Response
 from src.mongodb import update_friend
 
 
@@ -22,6 +22,8 @@ class MoodUpdater():
         self.delta_time = 0
         self.mood_lock = threading.RLock()  # 线程锁
         self.msg_time = []
+
+
     def update_in_timeloop(self, ):
         """
         不在主线程，根据时间循环触发
@@ -31,12 +33,12 @@ class MoodUpdater():
         # with self.mood_lock:
         self.get_delta_time()
         with self.mood_lock:
-            if self.delta_time > 30:
-                self.interest_value = self.interest_value*INTEREST_DECAY_RATE[0]
-                self.mood_value = self.mood_value * MOOD_DECAY_RATE[0]
-            elif self.delta_time >200:
+            if self.delta_time > 200:
                 self.interest_value = self.interest_value*INTEREST_DECAY_RATE[1]
                 self.mood_value = self.mood_value * MOOD_DECAY_RATE[1]
+            elif self.delta_time >30:
+                self.interest_value = self.interest_value*INTEREST_DECAY_RATE[0]
+                self.mood_value = self.mood_value * MOOD_DECAY_RATE[0]
 
             # if average_time > 10:
             #     self.mood_value = self.mood_value*MOOD_DECAY_RATE[0]
@@ -46,24 +48,63 @@ class MoodUpdater():
             # 保持兴趣0~100,心情-50~50
 
             self._clamp_values()
-            time_obsever.delete_timelist()
+            # buffer_time_observer.delete_timelist()
 
-    def update_in_msgloop(self, msg:Msgbase):
+
+    def update_in_msgloop(self, response:Response):
         """根据消息触发"""
-        
 
-
-        name = msg.name
-        content = msg.content
-        now = time.time()
         self.get_delta_time()
 
         # 首次得到消息，兴趣值加的最多，往后的刺激递减
         self.interest_value +=np.exp(-self.delta_time) * 20
 
         # 情感分析部分：
+        contents = response.get_emotion_dict()
+        emotion_manager.LLM_get_emotion(contents)
+        emotion_manager.analyze_many()
+
+        mood_delta = emotion_manager.mood_delta
+
+        self.mood_value += mood_delta * 5
+
+        if mood_delta > 0.5:
+            favor_delta = 0.2
+        elif mood_delta < -0.5:
+            favor_delta = -0.1
+        else:
+            favor_delta = 0.0
+
+        if self.delta_time < 10:
+            rel_delta = 0.1
+        elif self.delta_time < 60:
+            rel_delta = 0.05
+        else:
+            rel_delta = 0.02
+
+        rel_delta += max(-0.05, min(0.5, mood_delta * 0.2))
+
+        # 写回数据库并约束由 update_friend_metrics 完成
+        try:
+            update_friend(name, favor_delta=favor_delta, relationship_delta=rel_delta)
+        except Exception as e:
+            logger.error(f"更新好友熟悉度/亲近值失败: {e}")
+
+        logger.info(f"mood_delta:{mood_delta} interest_value:{self.interest_value} favor_delta:{favor_delta} rel_delta:{rel_delta}")
+
+        # 最终限制本地值范围
+        self._clamp_values()
+
+    def get_one_mood(self, name, content):
+        """分析单独一个人的情绪状态"""
+
+        # 情感分析部分：
         emotion_manager.LLM_get_emotion(content)
-        positive,negative,neutral,total = emotion_manager.emotion_analyze_basic() # type: ignore
+        emotions = emotion_manager.emotion_analyze_basic()
+        if emotions is None:
+            logger.warning("情感分析失败")
+            return
+        positive,negative,neutral,total = emotions
         mood_delta = (positive - negative) / MOOD_INFLUENCE_FACTOR
 
         self.mood_value += mood_delta * 5
@@ -95,13 +136,20 @@ class MoodUpdater():
         # 最终限制本地值范围
         self._clamp_values()
 
+
     def get_delta_time(self):
+        """
+        当前时间 - 上一次缓存出队时间
+        """
         self.timenow = time.time()
-        time_list = time_obsever.get_timelist()
-        if len(time_list) == 0:
+        time_list = buffer_time_observer.get_timelist()
+        
+        # 这里取倒数第二个时间戳,因为执行之前已经把本次时间戳存进去了.
+        if len(time_list) <= 1:
             self.delta_time = 10000
         else:
-            self.delta_time = self.timenow - time_list[-1]
+            self.delta_time = self.timenow - time_list[-2]
+
 
     def _clamp_values(self):
         if self.interest_value < 1e-5:

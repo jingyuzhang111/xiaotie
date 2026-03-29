@@ -6,6 +6,7 @@ from collections import OrderedDict
 import threading
 from src.logger import get_module_logger
 import queue
+from src.observer import buffer_time_observer
 
 logger = get_module_logger("message_buffer")
 BUFFER_NUM = 10 # 紧跟新消息有10条及以上的待处理消息,则提前处理
@@ -55,6 +56,7 @@ class MessageBuffer:
         
         while True:
             response = self.queue.get()  # 阻塞等待消息
+            buffer_time_observer.look()  # 记录缓冲出队时间
             try:
                 if self.msg_ready_task and response:
                     self.msg_ready_task(response)

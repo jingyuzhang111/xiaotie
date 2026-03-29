@@ -10,7 +10,7 @@ import time
 import threading
 from datetime import datetime
 from src.logger import get_module_logger
-from src.mood import moodupdater
+from src.emood.mood import moodupdater
 from src.memory.structure import net_manager
 import os
 from src.thread.threadmanager import thread_manager
