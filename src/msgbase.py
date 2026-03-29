@@ -2,7 +2,7 @@ from datetime import datetime
 import time
 import threading
 from src.config import *
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Literal
 from collections import deque
 import hashlib
 from src.observer import msg_subject,time_obsever
@@ -11,7 +11,9 @@ import sys
 import io
 import json
 from src.logger import get_module_logger
+logger = get_module_logger('msgbase')
 from dataclasses import dataclass, field
+
 
 
 def string_to_hash(text, algorithm='md5'):
@@ -22,7 +24,7 @@ def string_to_hash(text, algorithm='md5'):
 
 
 class Msgbase:
-    def __init__(self, msg: Optional[Dict],name,content):
+    def __init__(self, msg: Optional[Dict],name="",content=""):
         """消息基础类
 
         能够自动创建的参数：
@@ -33,10 +35,13 @@ class Msgbase:
         group_name: str, 群组名称,若没有群组名称，则默认为“电脑本地”
         chat_stream: str, 聊天流标识符，若没有则根据group_name生成
 
+        一定要有的参数:
+        name: str, 发送者名称
+        content: str, 消息内容
         """
         msg = self.host_msg_complete(msg)
-        self.name:str
-        self.content:str
+        self.name: str = name
+        self.content: str = content
         self.chat_stream = msg['chat_stream']
         self.group_name = msg['group_name']
         self.timestamp = time.time()
@@ -53,12 +58,29 @@ class Msgbase:
         }
         msg_subject.notify_observers(self)
 
-    def host_msg_complete(self, msg: Optional[Dict]):
+    def host_msg_complete(self, msg: Optional[Dict]) -> Dict:
+        """补全参数group_name和chat_stream"""
+        if msg is None:
+            msg = {}
         if "group_name" not in msg.keys():
             msg['group_name'] = "电脑本地"
         if "chat_stream" not in msg.keys():
             msg['chat_stream'] = string_to_hash(msg['group_name'])
         return msg
+    
+    def _to_dict(self)->Dict:
+        return {
+            "name": self.name,
+            "content": self.content,
+            "timestamp": self.timestamp,
+            "time": self.time,
+            "chat_stream": self.chat_stream,
+            'chat_plat': self.chat_plat,
+            'group_name': self.group_name,
+        }
+    
+    def _to_json(self):
+        return json.dumps(self._to_dict(), ensure_ascii=False)
 
 
 class FriendMsg(Msgbase):
@@ -71,6 +93,9 @@ class FriendMsg(Msgbase):
     """
     def __init__(self, msg: Optional[Dict]):
         """这里msg是接收的json转字典"""
+        if msg is None:
+            logger.error("FriendMsg 初始化失败，msg参数为None")
+            raise ValueError("FriendMsg 初始化失败，msg参数为None")
         self.name = msg['name']
         self.content = msg['content']
         super().__init__(msg, self.name, self.content)
@@ -78,7 +103,7 @@ class FriendMsg(Msgbase):
 
 class Response(Msgbase):
     """机器人的回复消息类"""
-    def __init__(self, msg: Msgbase, response=""):
+    def __init__(self, response=""):
         """
         msg参数，是朋友的消息，用于标定要回复哪一条消息
 
@@ -89,8 +114,17 @@ class Response(Msgbase):
         """
         self.content = response
         self.name = BOT_NAME
-        self.Msgs = []
+        self.Msgs: List[Msgbase] = []
+        self.sys_prompt = ""
+        self.user_prompt = ""
+        super().__init__(None, self.name, self.content)
+
+
+    def init(self,msg: Msgbase):
+        """根据消息类初始化回复类"""
         self.Msgs.append(msg)
+        self.name = BOT_NAME
+        self.content = ""
         resmsg = {
             "name": self.name,
             "content": self.content,
@@ -103,25 +137,19 @@ class Response(Msgbase):
             resmsg['chat_stream'] = string_to_hash(msgvalue['group_name'])
         super().__init__(resmsg, self.name, self.content)
 
+
     def alter_response(self,response:str):
         """修改回复内容"""
-        self.response = response
-        self.value['content'] = self.response
+        self.content = response
+        self.value['content'] = self.content
 
+
+    def add_msg(self, msg: Msgbase):
+        """添加消息到回复类中"""
+        self.Msgs.append(msg)
 
 
 
 if __name__ == '__main__':
-    m1 = Msgbase({
-        "name":1,
-        "content":2,
-    })
-    m2 = Msgbase({
-        "name": 1,
-        "content": 2,
-    })
-    m3 = Msgbase({
-        "name": 1,
-        "content": 2,
-    })
-    print(time_obsever.get_timelist())
+    res = Response()
+    print(res._to_dict())

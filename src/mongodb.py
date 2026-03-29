@@ -20,14 +20,14 @@ db_friend = db['friend']
 db_messages = db["messages"]
 db_memory_nodes = db["memory_nodes"]
 db_memory_edges = db["memory_edges"]
-def db_add(msg):
+def db_add(msg:Msgbase|dict):
 	"""
 	data: dict,需要有键值content，name才行
 	"""
 	# 使用字符串类型检查，避免循环导入问题
-	if not hasattr(msg, '__class__') or msg.__class__.__name__ not in ['Msgbase', 'Response', 'FriendMsg']:
-		logger.info("db_add需要Msgbase类型的参数")
-		return
+	if isinstance(msg, dict):
+		msg = Msgbase(msg)
+
 	logger.debug(msg.value)
 	db_messages.insert_one(msg.value)
 	logger.info(f"消息已存入数据库, 来自:{msg.name}")
@@ -35,6 +35,7 @@ def db_add(msg):
 
 
 def ensure_friend(name):
+	"""确保数据库中有这个人的信息，没有就创建"""
 	friend = db_friend.find_one({"name":name})
 	if not friend:
 		friend = {

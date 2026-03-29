@@ -3,13 +3,13 @@
   "configurations": [
     {
       "name": "前端: Vue (Vite dev)",
-      "type": "node",
+      "type": "node-terminal",
       "request": "launch",
+      "command": "npm run dev",
       "cwd": "D:/demo/vue/vue-flask-deepseek",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"]
+      "env": {
+        "BROWSER": "none"
+      }
     },
     {
       "name": "前端: Browser (5173)",
@@ -36,6 +36,7 @@
   "compounds": [
     {
       "name": "一起: Backend + Vue Dev",
+      "stopAll": false,
       "configurations": [
         "后端: run_app.py (Debug)",
         "前端: Vue (Vite dev)"

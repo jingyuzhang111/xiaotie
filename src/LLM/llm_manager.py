@@ -14,11 +14,13 @@ client = OpenAI(
 
 def chat_stream(sys_prompt,user_prompt: str = ''):
     start_time = time.time()
+    if LLM_TEXT_NAME is None:
+        logger.error("LLM_TEXT_NAME 是空的.")
+        return ""
     response =client.chat.completions.create(
         model=LLM_TEXT_NAME,  # 选择模型
         messages=[
-            {"role": "system",
-             "content": f"{sys_prompt}"},
+            {"role": "system","content": f"{sys_prompt}"},
             {"role": "user", "content": f"{user_prompt}"},
         ],
         stream=False,

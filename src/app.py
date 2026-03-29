@@ -1,7 +1,6 @@
 from flask import Flask, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from src.api import msg_process
 
 # from mongostart import *
 # _mongod_process = start_mongod()
@@ -15,6 +14,8 @@ from src.mood import moodupdater
 from src.memory.structure import net_manager
 import os
 from src.thread.threadmanager import thread_manager
+from src.messagebuffer import message_buffer
+
 
 logger = get_module_logger("app")
 
@@ -30,19 +31,6 @@ socketio = SocketIO(app,
 
 # 存储连接的客户端（可选）
 connected_clients = {}
-
-
-def start_threads():
-    """启动所有线程"""
-    thread_manager.add_tasks(net_manager.memory_process, interval_sec=300)
-    thread_manager.add_tasks(moodupdater.update_in_timeloop, interval_sec=2)
-    thread_manager.start()
-
-def restart_threads():
-    """重启所有线程"""
-    if thread_manager.is_alive():
-        thread_manager.restart()
-
 
 # WebSocket 事件处理
 @socketio.on('connect')
@@ -71,24 +59,35 @@ def handle_disconnect():
 def handle_message(data):
     logger.debug(f'收到消息:{data}')
 
-    # 处理消息
-    responses = msg_process(data)
+    # 接收消息，转为消息类
+    fri_msg = FriendMsg(data)
+
+    db_add(fri_msg) # 存入数据库
+
+    # 消息送入缓冲池
+    message_buffer.add_message_start_loop(fri_msg)
+
+    # 检查各个线程的状态, 防止部分线程假死智斗
     thread_manager.check_in_handle_message()
 
 
 
-    logger.debug(f"发送消息:{responses}")
-    # 主动发送回复
-    for response in responses:
-        """
-        电脑内部端的response格式只需要文本
-        对于微信端，预留接口。
-        """
-        emit('message', response, broadcast=False)
-
 @app.route('/')
 def index():
     return "WebSocket Server is Running!"
+
+
+def start_threads():
+    """启动所有线程"""
+    thread_manager.add_tasks(net_manager.memory_process, interval_sec=300)
+    thread_manager.add_tasks(moodupdater.update_in_timeloop, interval_sec=2)
+    thread_manager.start()
+
+def restart_threads():
+    """重启所有线程"""
+    if thread_manager.is_alive():
+        thread_manager.restart()
+
 
 def run_app():
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or os.environ.get('WERKZEUG_RUN_MAIN') is None:
@@ -96,6 +95,24 @@ def run_app():
         restart_threads()
         print(thread_manager.get_all_infos())
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, use_reloader=False, log_output=False, allow_unsafe_werkzeug=True)
+
+
+def main_loop(msg):
+    """
+    agent核心部分,被触发后自动完成agent的循环流程
+    触发的地方:聊天消息/心理消息
+    接收:消息内容,或者是定时器的心流消息
+
+    聊天消息作为与其他人的交流渠道
+    心理消息用于agent自发触发,模仿人,保证没人理时,能够自主产生任务而不是永远呆楞着.模仿人的主动性
+    """
+...
+
+
+
+
+
+    
 
 
 logger.info("小贴Flask服务器启动中...")

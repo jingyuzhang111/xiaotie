@@ -1,13 +1,14 @@
 from dataclasses import dataclass, field
-from msgbase import FriendMsg
+from src.msgbase import FriendMsg, Response
 import time
-from typing import Dict
+from typing import Dict, Optional, Callable
 from collections import OrderedDict
 import threading
 from src.logger import get_module_logger
+import queue
 
 logger = get_module_logger("message_buffer")
-
+BUFFER_NUM = 10 # 紧跟新消息有10条及以上的待处理消息,则提前处理
 
 @dataclass
 class CacheMessages:
@@ -16,18 +17,53 @@ class CacheMessages:
     T:已处理消息
     F:过期消息
     """
-    message:"FriendMsg"
+    message: FriendMsg
     Flag: str = "U" # 标定缓冲
     timestamp: float = field(default_factory=lambda: 0.0) # 时间戳
 
 class MessageBuffer:
-    def __init__(self,):
+    def __init__(self):
         # 有序字典，防止错序，每个聊天流一个缓冲池
         self.buffer_pool: Dict[str, OrderedDict[str, CacheMessages]] = {}
         self.lock = threading.RLock()
         # 每个聊天流加一个计时器
         self.timers: Dict[str, threading.Timer] = {}
 
+
+        # 消息处理线程相关
+        self.msg_ready_task: Optional[Callable[[Response], None]] = None
+        self.queue = queue.Queue()  # 消息处理完成后的结果队列
+        self.thread = threading.Thread(target=self._process_queue, daemon=True)
+
+
+    def set_handler(self, handler):
+        """设置消息处理函数,添加线程"""
+        logger.info("设置消息处理函数")
+        if not handler:
+            raise TypeError("消息处理函数不能为空")
+
+        self.msg_ready_task = handler
+
+        if self.thread.is_alive():
+            return
+
+
+        self.thread.start()
+
+    def _process_queue(self):
+        """处理完成的消息队列,调用回调函数"""
+        
+        while True:
+            response = self.queue.get()  # 阻塞等待消息
+            try:
+                if self.msg_ready_task and response:
+                    self.msg_ready_task(response)
+            except Exception as e:
+                logger.exception(f"消息处理线程发生错误: {e}")
+            finally:
+                self.queue.task_done()
+
+    # 消息从这里进入缓冲池,自动获得UTF标签
     def add_message_start_loop(self, msg: FriendMsg):
         logger.info("缓存")
         chat_stream = msg.chat_stream
@@ -59,7 +95,7 @@ class MessageBuffer:
             if chat_stream in self.timers:
                 self.timers[chat_stream].cancel()
 
-            if self._process_immediately(chat_stream, new_msg_key) > 3:
+            if self._process_immediately(chat_stream, new_msg_key) >= BUFFER_NUM:
                 # 立即处理消息
                 print("提前处理")
                 self._process_messages(chat_stream)
@@ -67,8 +103,7 @@ class MessageBuffer:
 
             self._start_timer(chat_stream)
 
-
-    # 设置3秒内没有新的消息，就进行消息合并开始下一步处理
+    # 设置3秒内没有新的消息，就进行消息合并开始下一步处理,自动执行_process_messages
     def _start_timer(self,chat_stream):
         timer = threading.Timer(3.0, self._process_messages, [chat_stream])
         timer.daemon = True
@@ -76,6 +111,7 @@ class MessageBuffer:
         self.timers[chat_stream] = timer
 
     def _process_immediately(self,chat_stream,new_msg_key):
+        """连续多条消息到达存储上限,则立即处理"""
         messages = self.buffer_pool[chat_stream]
         show(messages)
 
@@ -121,6 +157,49 @@ class MessageBuffer:
 
             last_msg.Flag = "T"
 
+        
+        res = self.get_out_msg()
+        if res:
+            self.queue.put(res)
+        
+
+    def _delete_by_flag(self, chat_stream, flags=("F", "T")):
+        """删除指定聊天流中匹配标记的消息。"""
+        if chat_stream not in self.buffer_pool:
+            return
+
+        messages = self.buffer_pool[chat_stream]
+        delete_keys = [k for k, v in messages.items() if v.Flag in flags]
+        for key in delete_keys:
+            messages.pop(key, None)
+
+        # 删除空的聊天流
+        if not messages:
+            self.buffer_pool.pop(chat_stream, None)
+    
+    def get_out_msg(self):
+        """整合消息,返回Response对象,清除TF标志数组"""
+        response = Response()
+        with self.lock:
+            for chat_stream, buffer_pool in self.buffer_pool.items():
+                
+                # 如果没有T,就跳过这个聊天流
+                if not any(cache_msg.Flag == "T" for cache_msg in buffer_pool.values()):
+                    continue
+
+                # 得到所有T,F标志的消息
+                merged_items = [m for m in buffer_pool.values() if m.Flag in ("F", "T")]
+                if not merged_items:
+                    continue
+                
+                for item in merged_items:
+                    response.add_msg(item.message)
+
+                # 取走后清理本轮已消费消息
+                self._delete_by_flag(chat_stream, flags=("T", "F"))
+                return response
+        return None
+
 
 
 message_buffer = MessageBuffer()
@@ -132,30 +211,13 @@ def show(msgs):
 
 
 if __name__ == "__main__":
-
-    for i in range(8):
-        msg = FriendMsg({
-            "name": "测试用户",
-            "content": "这是一个测试消息",
-        })
-        message_buffer.add_message_start_loop(msg)
-        time.sleep(1)
     msg = FriendMsg({
         "name": "测试用户",
         "content": "这是一个测试消息",
     })
-    message_buffer.add_message_start_loop(msg)
-    time.sleep(5)
-    message_buffer.add_message_start_loop(msg)
-    time.sleep(2)
-    message_buffer.add_message_start_loop(msg)
-    time.sleep(2)
-    message_buffer.add_message_start_loop(msg)
-    for i in range(8):
-        msg = FriendMsg({
-            "name": "测试用户",
-            "content": "这是一个测试消息",
-        })
-        message_buffer.add_message_start_loop(msg)
+    for i in range(5):
+        msgs = message_buffer.add_message_start_loop(msg)
         time.sleep(1)
-
+        if msgs:
+            print("触发处理")
+            print(msgs["merged_content"])

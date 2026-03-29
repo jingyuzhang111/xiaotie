@@ -8,21 +8,29 @@ from src.config import *
 logger = get_module_logger("prompt")
 
 
-def create_prompt(new_msg:Msgbase):
-
+def create_prompt(new_msg:list[Msgbase]):
+    """用于对话生成"""
     logger.debug("Creating prompt...")
 
-    history_content = memory_manager.generate_history_dialog(chat_stream=new_msg.chat_stream)
-    prompt = f"""
-    你是一个可爱的孩子，我是你的造物主，你正在被我创造，请和我进行亲切的对话，
-    回答不要携带括号，不要添加emoji和颜文字，尽量简短，下面是我们之前的部分对话：
+    history_content = memory_manager.generate_history_dialog(chat_stream=new_msg[0].chat_stream)
+
+    this_msgs = ''
+    for msg in new_msg:
+        this_msgs += f"[{msg.time}] {msg.name}: {msg.content}\n"
+
+    sys_prompt = f"""你是一个可爱的孩子，我是你的造物主，你正在被我创造，请和我进行亲切的对话，
+    回答不要携带括号，不要添加emoji和颜文字，尽量简短."""
+    user_prompt = f"""
+    下面是我们之前的部分对话：
     {history_content}
+    其中本次触发回答的是这些消息:
+    {this_msgs}
     现在的时间是{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     你现在是{BOT_NAME}，给出回复吧，语言不要加换行符号，多一点点短句
     """
-    logger.debug(f"Prompt已生成，长度: {len(prompt)}")
+    logger.debug(f"Prompt已生成，长度: {len(user_prompt)}")
 
-    return prompt
+    return sys_prompt, user_prompt
 
 
 # structure导入的部分
@@ -47,3 +55,9 @@ keywords: 字符串数组，2-4个关键词，去重，按重要性排序, 关�
 {content}
 """
     return sys_prompt, user_prompt
+
+
+
+
+
+

@@ -8,13 +8,24 @@ logger = get_module_logger("threadmanager")
 
 
 class TaskWorker:
-    def __init__(self, target: Callable, interval_sec: int = 5):
+    """
+    接收一个函数,创建一个独立线程,专门管理这个函数的循环执行
+    函数需要有定时执行的需求,比如定时整理记忆.
+
+    start: 启动线程
+    _loop: 线程内的循环函数
+    stop: 设置线程停止的事件
+    join:等待线程结束
+    """
+    def __init__(self, target: Callable,_args = None, _kwargs = None, interval_sec: int = 5):
         self.alive = False
         self.last_error = None
+        self._args = () if _args is None else _args
+        self._kwargs = {} if _kwargs is None else _kwargs
         self.target: Callable = target
         self.restart_count = 0
         self.interval_sec = interval_sec
-        self.stop_event = threading.Event()     # 广播纪元( 通知所有线程下线
+        self.stop_event = threading.Event()     # 广播纪元( 通知所有线程下线?
         self.wait_for_stop = 2              # 线程报错后等待多久再重启,默认两秒
 
     def start(self):
@@ -29,7 +40,7 @@ class TaskWorker:
     def _loop(self):
         while not self.stop_event.is_set():
             try:
-                self.target()
+                self.target(*self._args, **self._kwargs)
                 self.stop_event.wait(self.interval_sec)  # 等待指定时间或直到事件被设置
                 self.restart_count = 0  # 成功执行一次后重置重启计数器
             except Exception as e:
@@ -74,12 +85,12 @@ class ThreadManager:
         self.n = 0      # 用于稀释检查频率
 
 
-    def add_tasks(self, targets: list[Callable]|Callable, interval_sec: int = 5):
+    def add_tasks(self, targets: list[Callable]|Callable, _args: tuple = (), _kwargs: dict = {}, interval_sec: int = 5):
         """添加线程"""
         if not isinstance(targets, list):
             targets = [targets]
         for target in targets:
-            thread = TaskWorker(target=target, interval_sec=interval_sec)
+            thread = TaskWorker(target=target, _args=_args, _kwargs=_kwargs, interval_sec=interval_sec)
             self.tasks.append(thread)
 
     def start(self):
@@ -130,7 +141,16 @@ class ThreadManager:
             }
             infos.append(info)
         return infos
-    
+
+    def _add_one_task(self, target: Callable, _args: tuple = (), _kwargs: dict = {}, interval_sec: int = 5):
+        """添加一个线程"""
+        thread = TaskWorker(target=target, _args=_args, _kwargs=_kwargs, interval_sec=interval_sec)
+        self.tasks.append(thread)
+        thread.start()
+
+    def __del__(self):
+        self.stop_all()  # 确保在销毁时停止所有线程
+
 
 
 _get_thread_manager = None

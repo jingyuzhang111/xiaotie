@@ -77,4 +77,6 @@ if __name__ == "__main__":
     if not started:
         sys.exit(1)
     import src.app
+    import src.api
+    src.api.set_socketio(src.app.socketio)
     src.app.run_app()
