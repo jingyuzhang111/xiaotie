@@ -214,11 +214,14 @@ class NetManager():
         """获取文本的摘要和关键词"""
         sys_prompt, user_prompt = create_prompt_for_sum(string)
         result = chat_stream(sys_prompt, user_prompt)
+        if type(result)!=dict:
+            logger.error(f"获取摘要和关键词失败，LLM返回了非json格式的结果: {result}")
+            return {}
         return result
 
 
     def summarize_node(self):
-        """对消息文本进行总结，提取关键词"""
+        """对过去一段时间的消息文本进行随机抽样总结，并提取保存关键词"""
 
         # 获取时间正态分布的随机抽样
         msgs = memory_manager.get_memory_by_time()
@@ -236,9 +239,15 @@ class NetManager():
 
         # 喂给AI进行总结和关键词提取
         result: Any = self.get_summary_and_keywords(string)
-        json_result = json.loads(result)
+        if not isinstance(result, dict):
+            logger.error("记忆总结结果不是JSON对象: {}", result)
+            return "", []
 
-        return json_result["summary"], json_result["keywords"]
+        if "summary" not in result or "keywords" not in result:
+            logger.error("记忆总结结果缺少summary或keywords: {}", result)
+            return "", []
+
+        return result["summary"], result["keywords"]
 
 
     def update_edges(self, keywords):
@@ -313,7 +322,9 @@ class NetManager():
 
     # 用于定时更新状态
     def memory_process(self):
-        """记忆处理的主方法，所有方法都在这里集成"""
+        """记忆处理的主方法，所有方法都在这里集成
+        回忆总结得到边和节点，更新边和节点，遗忘过期的边和节点
+        """
         logger.info("进入记忆处理函数")
 
         # 进行一次回忆与总结
@@ -378,8 +389,8 @@ class NetManager():
 
 
     # 用于触发回忆,通过关键词触发节点,最终得到记忆并进行整合
-    def memory_trigger(self):
-        nodes_name = self.get_related_nodes("测试", max_depth=3)
+    def memory_trigger(self,node_name="测试"):
+        nodes_name = self.get_related_nodes(node_name, max_depth=3)
         related_memory = self.get_related_memory(nodes_name)
         related_memory = list(set(related_memory))
         print(f"相关节点: {nodes_name}")
@@ -405,13 +416,21 @@ net_manager = get_net_manager()
 
 
 if __name__ == "__main__":
-    # text = "今天天气真好啊！我好开心！"
-    # important_words = text_score(text)
-    # net_manager = get_net_manager()
+    text = "今天天气真好啊！我好开心！"
+    important_words,words = text_score(text)
+
+    net_manager = get_net_manager()
+
+    ans: dict = net_manager.get_summary_and_keywords(text)
     # net_manager.memory_process()
     # net_manager.memory_process()
     # net_manager.memory_process()
     # net_manager.memory_process()
-    # logger.info(f"{net_manager.nodenames}")
-    # logger.info(f"{net_manager.G.edges(data=True)}")
-    net_manager.memory_trigger()
+    logger.info(f"{ans["keywords"]}")
+    logger.info(f"{net_manager.nodenames}")
+    logger.info(f"{net_manager.G.edges(data=True)}")
+    logger.info(f"{important_words}")
+    for word in important_words:
+        if word not in net_manager.nodenames:
+            continue
+        net_manager.memory_trigger(node_name=word)

@@ -26,3 +26,5 @@ MOOD_DECAY_RATE=[0.9,0.8]
 INTEREST_DECAY_RATE=[0.9,0.8]
 
 MOOD_INFLUENCE_FACTOR=5  # 情感分析对心情值的影响因子
+
+BUFFER_NUM = 10 # 缓冲池合并消息数的上限,超过则立即将消息送出队列

@@ -16,8 +16,8 @@ logger = get_module_logger("mood")
 
 class MoodUpdater():
     def __init__(self):
-        self.interest_value = 0
-        self.mood_value = 0
+        self.interest_value:float = 0             # 兴趣值，决定回复概率
+        self.mood_value:float = 0                 # 心情值，影响回复内容和风格
         self.timenow = time.time()
         self.delta_time = 0
         self.mood_lock = threading.RLock()  # 线程锁
@@ -52,86 +52,53 @@ class MoodUpdater():
 
 
     def update_in_msgloop(self, response:Response):
-        """根据消息触发"""
+        """根据消息触发心理更新"""
 
         self.get_delta_time()
 
         # 首次得到消息，兴趣值加的最多，往后的刺激递减
         self.interest_value +=np.exp(-self.delta_time) * 20
 
-        # 情感分析部分：
-        contents = response.get_emotion_dict()
-        emotion_manager.LLM_get_emotion(contents)
-        emotion_manager.analyze_many()
+        # 情感分析部分/分析结果存储在emotion_manager里
+        contents = response.get_emotion_dict()      # 将消息列表转为适用于情感分析的字典格式
+        emotion_manager.LLM_get_emotion(contents)   # LLM分析
+        emotion_manager.analyze_many()              # 综合分析
 
         mood_delta = emotion_manager.mood_delta
 
-        self.mood_value += mood_delta * 5
+        for name, delta in mood_delta.items():
 
-        if mood_delta > 0.5:
-            favor_delta = 0.2
-        elif mood_delta < -0.5:
-            favor_delta = -0.1
-        else:
-            favor_delta = 0.0
+            # 总消息用于更新当前心情值
+            if name == "总消息":
+                self.mood_value += delta * 5
+            else:
+            # 个人的消息评价用于更新与此人的关系和好感度
+                # 好感度与此人的言行有关
+                if delta > 0.5:
+                    favor_delta = 0.2
+                elif delta < -0.5:
+                    favor_delta = -0.1
+                else:
+                    favor_delta = 0.0
 
-        if self.delta_time < 10:
-            rel_delta = 0.1
-        elif self.delta_time < 60:
-            rel_delta = 0.05
-        else:
-            rel_delta = 0.02
+                # 熟悉度只与接收消息的频率有关
+                # 熟悉度与好感度是相对独立的，见得多就熟悉，但不一定有好感
+                if self.delta_time < 10:
+                    rel_delta = 0.1
+                elif self.delta_time < 60:
+                    rel_delta = 0.05
+                else:
+                    rel_delta = 0.02
 
-        rel_delta += max(-0.05, min(0.5, mood_delta * 0.2))
+                rel_delta += max(-0.05, min(0.5, delta * 0.2))
 
-        # 写回数据库并约束由 update_friend_metrics 完成
-        try:
-            update_friend(name, favor_delta=favor_delta, relationship_delta=rel_delta)
-        except Exception as e:
-            logger.error(f"更新好友熟悉度/亲近值失败: {e}")
+                # 写回数据库并约束由 update_friend_metrics 完成
+                try:
+                    update_friend(name, favor_delta=favor_delta, relationship_delta=rel_delta)
+                except Exception as e:
+                    logger.error(f"更新好友熟悉度/亲近值失败: {e}")
 
-        logger.info(f"mood_delta:{mood_delta} interest_value:{self.interest_value} favor_delta:{favor_delta} rel_delta:{rel_delta}")
-
-        # 最终限制本地值范围
-        self._clamp_values()
-
-    def get_one_mood(self, name, content):
-        """分析单独一个人的情绪状态"""
-
-        # 情感分析部分：
-        emotion_manager.LLM_get_emotion(content)
-        emotions = emotion_manager.emotion_analyze_basic()
-        if emotions is None:
-            logger.warning("情感分析失败")
-            return
-        positive,negative,neutral,total = emotions
-        mood_delta = (positive - negative) / MOOD_INFLUENCE_FACTOR
-
-        self.mood_value += mood_delta * 5
-
-        if mood_delta > 0.5:
-            favor_delta = 0.2
-        elif mood_delta < -0.5:
-            favor_delta = -0.1
-        else:
-            favor_delta = 0.0
-
-        if self.delta_time < 10:
-            rel_delta = 0.1
-        elif self.delta_time < 60:
-            rel_delta = 0.05
-        else:
-            rel_delta = 0.02
-
-        rel_delta += max(-0.05, min(0.5, mood_delta * 0.2))
-
-        # 写回数据库并约束由 update_friend_metrics 完成
-        try:
-            update_friend(name, favor_delta=favor_delta, relationship_delta=rel_delta)
-        except Exception as e:
-            logger.error(f"更新好友熟悉度/亲近值失败: {e}")
-
-        logger.info(f"mood_delta:{mood_delta} interest_value:{self.interest_value} favor_delta:{favor_delta} rel_delta:{rel_delta}")
+                logger.info(f"mood_delta:{mood_delta} interest_value:{self.interest_value} favor_delta:{favor_delta} rel_delta:{rel_delta}")
 
         # 最终限制本地值范围
         self._clamp_values()

@@ -127,6 +127,11 @@ memory_manager = MemoryManager()
 def text_score(text:str, top_k=3):
     """
     对文本进行打分, 目前简单统计词频, 后续可以增加情感分析等维度
+    根据简单的分数计算得到前tok_k个重要词
+
+    目前已被LLM取代，此函数仅用于对实时的聊天内容进行关键词切分
+
+    好像关键词切分也是AI更好一些...
     """
     words_flag = {word: flag for word, flag in pseg.cut(text)}
     words_score = {}
@@ -146,9 +151,10 @@ def text_score(text:str, top_k=3):
         
         words_score[word] = score
 
-    words_important = dict(sorted(words_score.items(), key=lambda x: x[1], reverse=True))
-    words_important = list(words_important.keys())[0:top_k]
-    return words_important
+    words_dict = dict(sorted(words_score.items(), key=lambda x: x[1], reverse=True))
+    words = list(words_dict.keys())
+    words_important = list(words_dict.keys())[0:top_k]
+    return words_important,words
 
 
 if __name__ == "__main__":

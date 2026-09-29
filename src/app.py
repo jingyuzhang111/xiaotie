@@ -15,7 +15,7 @@ from src.memory.structure import net_manager
 import os
 from src.thread.threadmanager import thread_manager
 from src.messagebuffer import message_buffer
-
+from src.agent.tools import _TOOL_REGISTRY, tools_init
 
 logger = get_module_logger("app")
 
@@ -90,27 +90,15 @@ def restart_threads():
 
 
 def run_app():
+
+    tools_init()
+
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or os.environ.get('WERKZEUG_RUN_MAIN') is None:
         start_threads()
         restart_threads()
         print(thread_manager.get_all_infos())
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, use_reloader=False, log_output=False, allow_unsafe_werkzeug=True)
-
-
-def main_loop(msg):
-    """
-    agent核心部分,被触发后自动完成agent的循环流程
-    触发的地方:聊天消息/心理消息
-    接收:消息内容,或者是定时器的心流消息
-
-    聊天消息作为与其他人的交流渠道
-    心理消息用于agent自发触发,模仿人,保证没人理时,能够自主产生任务而不是永远呆楞着.模仿人的主动性
-    """
-...
-
-
-
-
+    
 
     
 

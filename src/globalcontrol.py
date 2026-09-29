@@ -14,7 +14,10 @@ class GlobalControl:
         self.split = True
         # 是否启用GPT_Sovits有声朗读
         self.speak = False
+        # 是否启用线程池
         self.use_threadpool = True
+        # 根据当前状态决定是否要进行思考循环
+        self.want_thinking = True
 
 
 global_control = GlobalControl()

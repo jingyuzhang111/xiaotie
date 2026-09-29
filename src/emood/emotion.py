@@ -62,12 +62,28 @@ class EmotionManager():
     """
     LLM_get_emotion
     输入文本,输出情感分析结果
+    各个数据的格式:
+    analyse:[{
+        "name": 人名/总消息
+        "key_insights": 对于积极/消极情感倾向的粗略概述
+        "overview": 情感偏积极还是消极
+        "balance": 情感稳定程度
+    }...]
+    response_contents:[{
+        "name": 人名/总消息
+        "喜悦": 0-10,
+        ...
+        "dominant": 主导情感名称
+        "intensity":情感的程度
+        "content":  对于这个人的话的情绪的概述
+    }...]
     """
     def __init__(self):
         self.history = []       # 分析的文本
         self.analyse = []       # 对基础情感的分析结果
         self.response_contents = []      # LLM分析的东西,json转字典,记录不同维度的情感强度
         self.combined_emotions = []     # 复合情感分析结果
+        self.mood_delta = {}            # 记录对不同人的好感度与熟悉程度
         self.client = openai.OpenAI(
             api_key=LLM_EMOTION_KEY,
             base_url=LLM_EMOTION_URL,
@@ -92,6 +108,7 @@ class EmotionManager():
         }
 
     def LLM_get_emotion(self, content):
+        # 全局设置，若选择使用线程池，则不再一次性输出多个人物的情感分析结果
         if global_control.use_threadpool:
             result = analyze_many_parallel(content)
             for res in result["results"]:
@@ -144,14 +161,20 @@ class EmotionManager():
                      "content": sys_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.1,
+                extra_body={"thinking": {"type": "disabled"}},
+                temperature=0.0,
                 max_tokens=500,
             )
-            response_contents = response.choices[0].message.content.strip()
+            response_contents = (response.choices[0].message.content or "").strip()
             llm_time = time.time() - start_time
             logger.debug(f"LLM推理耗时: {llm_time:.2f}s")
 
-            self.response_contents =json.loads(response_contents)
+            if not response_contents:
+                logger.warning("情绪分析返回空内容")
+                self.response_contents = []
+                return
+
+            self.response_contents = json.loads(response_contents)
             logger.info(self.response_contents)
         except Exception as e:
             logger.error(f'大模型不懂情感: {e}')
@@ -159,9 +182,14 @@ class EmotionManager():
 
 
 
-
     def analyze_many(self):
+        """
+        对LLM_get_emotion得到的结果进行分析,得到基础情感分析和复合情感分析
+
+        处理self.response_contents的列表,一个元素就是一个人
+        """
         self.combined_emotions.clear()  # 清空之前的复合情感分析结果
+        self.mood_delta.clear()  # 清空之前的好感度/熟悉度变化记录
 
         if self.response_contents is None:
             return
@@ -172,9 +200,10 @@ class EmotionManager():
                 logger.warning("情感分析失败")
                 return
             positive,negative,neutral,total = emotions
-            if res["name"] == "总消息":
-                logger.info(f"整体情感分析结果 - 正面: {positive}, 负面: {negative}, 中性: {neutral}, 总体: {total}")
-                self.mood_delta = (positive - negative) / MOOD_INFLUENCE_FACTOR
+
+            mood_delta = (positive - negative) / MOOD_INFLUENCE_FACTOR
+            self.mood_delta[res["name"]] = mood_delta
+
             self.combined_emotions.append(self.emotion_analyze_combined(res))
 
 
@@ -183,6 +212,7 @@ class EmotionManager():
 
 
         analyse = {
+            "name": response_content.get("name", None),
             "key_insights": [],  # 初始化key_insights列表
             "overview": "",  # 情感概览
             "balance": "",   # 情感平衡度
@@ -219,11 +249,11 @@ class EmotionManager():
 
         # 得到基本的文本描述
         if response_content["喜悦"] >= 7:
-            analyse["key_insights"].append("用户处于较强的愉悦状态")
+            analyse["key_insights"].append("我感到愉悦状态")
         if response_content["愤怒"] >= 6:
             analyse["key_insights"].append("检测到明显的愤怒情绪，需要谨慎处理")
         if response_content["恐惧"] >= 5:
-            analyse["key_insights"].append("用户表现出担忧或不安")
+            analyse["key_insights"].append("我表现出担忧或不安")
         if response_content["信任"] <= 2:
             analyse["key_insights"].append("信任度较低，需要建立信任关系")
 
@@ -236,7 +266,7 @@ class EmotionManager():
         """
         寻找复合情感,以下格式存储:
         [{
-        "name": "爱",   # 复合情感名称
+        "class": "爱",   # 复合情感名称
         "components": ["喜悦", "信任"],     # 复合情感的组成要素
         "intensity": 7,                     # 复合情感的强度（取组成要素中较弱的那个）
         "level": "强"                   # 强度等级(根据intensity划分为弱、中、强)
@@ -259,10 +289,12 @@ class EmotionManager():
 
         for combined_name, ((emo1, emo2), threshold) in emotion_combinations.items():
             if response_content[emo1] >= threshold and response_content[emo2] >= threshold:
+                
                 intensity = min(response_content[emo1], response_content[emo2])
 
                 combined_emotions.append({
-                    "name": combined_name,
+                    "name": response_content.get("name", None),
+                    "class": combined_name,
                     "components": [emo1, emo2],
                     "intensity": intensity,
                     "level": "强" if intensity >= 7 else "中" if intensity >= 5 else "弱"
@@ -270,7 +302,8 @@ class EmotionManager():
 
         if not combined_emotions:
             combined_emotions.append({
-                "name": "无明显复合情感",
+                "name": response_content.get("name", None),
+                "class": "",
                 "components": [],
                 "intensity": 0,
                 "level": "弱"
@@ -282,6 +315,7 @@ emotion_manager = EmotionManager()
 
 if __name__ == '__main__':
     content = history_for_emo("小贴")
+    # 文本分析支持的字典输入格式：
     content = {
         "小明": "我今天好开心啊！",
         "小红": "我感觉有点难过。",

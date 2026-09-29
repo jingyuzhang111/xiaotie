@@ -63,20 +63,30 @@ def LLM_get_one_emotion(content):
                     "content": sys_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            extra_body={"thinking": {"type": "disabled"}},
+            response_format={"type": "json_object"},
             temperature=0.1,
-            max_tokens=100,
+            max_tokens=200,
         )
-        response_content = response.choices[0].message.content.strip()
+        response_content = (response.choices[0].message.content or "").strip()
         llm_time = time.time() - start_time
         logger.debug(f"LLM推理耗时: {llm_time:.2f}s")
 
-        response_content =json.loads(response_content)
-        logger.info(response_content)
-    except Exception as e:
-        logger.error(f'大模型不懂情感: {e}')
-        response_content = None
+        if not response_content:
+            logger.warning("情绪分析返回空内容")
+            return None
 
-    return response_content
+        try:
+            parsed_content = json.loads(response_content)
+        except json.JSONDecodeError:
+            logger.error("情绪分析返回了非JSON内容: {}", response_content[:300])
+            return None
+
+        logger.info(parsed_content)
+        return parsed_content
+    except Exception as e:
+        logger.error("情绪分析请求失败: {}: {}", type(e).__name__, str(e)[:500])
+        return None
 
 
 def analyze_many_parallel(contents:Dict[str,str]):
@@ -85,6 +95,7 @@ def analyze_many_parallel(contents:Dict[str,str]):
     failed = []
     future_to_name = {}
     start = time.time()
+    # 创建线程池，用于加速情感分析
     with ThreadPoolExecutor(max_workers=5) as t:
         for name, content in contents.items():
             if not content.strip():

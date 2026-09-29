@@ -7,9 +7,11 @@ import threading
 from src.logger import get_module_logger
 import queue
 from src.observer import buffer_time_observer
+from src.config import *
 
 logger = get_module_logger("message_buffer")
-BUFFER_NUM = 10 # 紧跟新消息有10条及以上的待处理消息,则提前处理
+
+# BUFFER_NUM = 10 # 紧跟新消息有10条及以上的待处理消息,则提前处理
 
 @dataclass
 class CacheMessages:

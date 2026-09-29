@@ -24,6 +24,7 @@ def string_to_hash(text, algorithm='md5'):
 
 
 class Msgbase:
+    """只作为基础类用来继承，不直接使用"""
     def __init__(self, msg: Optional[Dict],name="",content=""):
         """消息基础类
 
@@ -103,7 +104,10 @@ class FriendMsg(Msgbase):
 
 
 class Response(Msgbase):
-    """机器人的回复消息类"""
+    """
+    机器人的回复消息类
+    注意显式调用init函数,保证回复与消息设置一致
+    """
     def __init__(self, response=""):
         """
         msg参数，是朋友的消息，用于标定要回复哪一条消息
@@ -113,16 +117,16 @@ class Response(Msgbase):
         先进行消息缓冲，对于部分内容进行回复时，将那些消息整合为一个消息类，再根据存储的消息类生成回复内容，
         也就是在接收消息时就生成回复类，根据buffer决断self.Msgs = []里面有多少消息，然后进行回复
         """
-        self.content = response
+        self.content = response         # 回复内容
         self.name = BOT_NAME
-        self.Msgs: List[Msgbase] = []
+        self.Msgs: List[Msgbase] = []   # 此次作为回复目标的消息列表
         self.sys_prompt = ""
         self.user_prompt = ""
         super().__init__(None, self.name, self.content)
 
 
     def init(self,msg: Msgbase):
-        """根据消息类初始化回复类"""
+        """根据消息类初始化回复类,"""
         self.Msgs.append(msg)
         self.name = BOT_NAME
         self.content = ""
