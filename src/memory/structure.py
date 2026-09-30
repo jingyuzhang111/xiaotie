@@ -2,7 +2,7 @@
 import time
 from src.memory.memory import memory_manager, text_score
 from src.mongodb import *
-from src.LLM.llm_manager import chat_stream
+from src.LLM.client import call, SHAPE_JSON
 from src.LLM.prompt import create_prompt_for_sum
 import json
 from typing import Any
@@ -213,11 +213,11 @@ class NetManager():
     def get_summary_and_keywords(self, string):
         """获取文本的摘要和关键词"""
         sys_prompt, user_prompt = create_prompt_for_sum(string)
-        result = chat_stream(sys_prompt, user_prompt)
-        if type(result)!=dict:
-            logger.error(f"获取摘要和关键词失败，LLM返回了非json格式的结果: {result}")
+        result = call(sys_prompt, user_prompt, profile="summarize", shape=SHAPE_JSON)
+        if not result.ok or not isinstance(result.data, dict):
+            logger.error(f"获取摘要和关键词失败: {result.error or result.data}")
             return {}
-        return result
+        return result.data
 
 
     def summarize_node(self):

@@ -1,17 +1,12 @@
-import openai
 import json
 from typing import Dict,List,Tuple
 from src.config import *
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 
+from src.LLM.client import call, SHAPE_JSON
 from src.logger import get_module_logger
 logger = get_module_logger('LLMrequest')
-
-client = openai.OpenAI(
-            api_key=LLM_EMOTION_KEY,
-            base_url=LLM_EMOTION_URL,
-        )
 
 def get_prompt(content:dict):
     if content.keys() != {"总消息"}:
@@ -54,39 +49,13 @@ def LLM_get_one_emotion(content):
     """分析单独一段文本的情感状态"""
     sys_prompt, user_prompt = get_prompt(content)
 
-    try:
-        start_time = time.time()
-        response = client.chat.completions.create(
-            model=LLM_EMOTION_NAME,  # 选择模型
-            messages=[
-                {"role": "system",
-                    "content": sys_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            extra_body={"thinking": {"type": "disabled"}},
-            response_format={"type": "json_object"},
-            temperature=0.1,
-            max_tokens=200,
-        )
-        response_content = (response.choices[0].message.content or "").strip()
-        llm_time = time.time() - start_time
-        logger.debug(f"LLM推理耗时: {llm_time:.2f}s")
-
-        if not response_content:
-            logger.warning("情绪分析返回空内容")
-            return None
-
-        try:
-            parsed_content = json.loads(response_content)
-        except json.JSONDecodeError:
-            logger.error("情绪分析返回了非JSON内容: {}", response_content[:300])
-            return None
-
-        logger.info(parsed_content)
-        return parsed_content
-    except Exception as e:
-        logger.error("情绪分析请求失败: {}: {}", type(e).__name__, str(e)[:500])
+    # 档位 emotion = LLM_EMOTION_* + temperature=0.1 + max_tokens=200
+    #             + 关思考链 + 服务端 json_object
+    result = call(sys_prompt, user_prompt, profile="emotion", shape=SHAPE_JSON)
+    if not result.ok:
+        logger.warning(f"情绪分析失败: {result.error}")
         return None
+    return result.data
 
 
 def analyze_many_parallel(contents:Dict[str,str]):

@@ -3,7 +3,7 @@ from typing import Any
 
 from src.agent.state import state
 from src.agent.tools import execute_tool, list_tools, tools_init
-from src.LLM.llm_manager import chat_stream
+from src.LLM.client import call, SHAPE_JSON
 from src.logger import get_module_logger
 
 logger = get_module_logger("agent-desition")
@@ -32,11 +32,14 @@ tool_call必须包含tool和arguments；final_answer必须包含content；stop�
 
 def request_decision() -> dict[str, Any] | None:
     system_prompt, user_prompt = build_decision_prompt()
-    result = chat_stream(system_prompt, user_prompt)
-    if not isinstance(result, dict):
-        logger.error("Agent决策结果不是JSON对象: {}", result)
+    result = call(system_prompt, user_prompt, profile="decide", shape=SHAPE_JSON)
+    if not result.ok:
+        logger.error(f"Agent决策失败: {result.error}")
         return None
-    return result
+    if not isinstance(result.data, dict):
+        logger.error(f"Agent决策结果不是JSON对象: {result.data}")
+        return None
+    return result.data
 
 
 def handle_decision(decision: dict[str, Any]) -> None:

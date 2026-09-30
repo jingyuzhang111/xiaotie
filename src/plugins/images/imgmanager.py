@@ -1,6 +1,5 @@
-from openai import OpenAI
+from src.LLM.client import call, SHAPE_TEXT
 from src.config import *
-import time
 import base64
 import mimetypes
 from pathlib import Path
@@ -21,44 +20,18 @@ def to_data_url(img_path: str) -> str:
 
 
 
-client = OpenAI(
-    api_key='sk-uvsmlcbwngsfyrfusxebvlzageqpfpoatfgcasdvzbxmlgmk',
-    base_url='https://api.siliconflow.cn/v1/'
-)
+def chat_stream(content, img, sys_prompt: str | None = None):
+    """
+    图片分析。内部走统一的 client.call:
+    档位 vision(LLM_IMAGE_*),形态 text,带一张图片作为多模态输入。
 
-def chat_stream(content,img,sys_prompt: str = None):
-    start_time = time.time()
+    注意这里保持了原行为:原实现没有设 temperature / max_tokens,
+    所以 vision 档这两项都是 None(不往请求里传),交给服务端默认。
+    """
     logger.info(f"发送给LLM的文本内容: {content}")
-    response =client.chat.completions.create(
-        model='Qwen/Qwen3.5-397B-A17B',  # 选择模型
-        messages=[
-            {"role": "system",
-             "content": f"{sys_prompt}"},
-            {"role": "user", 
-             "content": [
-                 {"type": "text", "text": content},
-                 {"type": "image_url", "image_url":{"url": img}}
-             ]
-             },
-             
-        ],
-        # max_completion_tokens=500,
-        # timeout=30,
-        # extra_body={
-        #     "enable_thinking": False,
-        #     "thinking_bugget": 100,
-        # }
-        
-    )
-    delta_time = time.time() - start_time
-    logger.info(f"LLM调用时间: {delta_time}")
-    if hasattr(response, 'usage'):
-        usage = response.usage
-        print(f"Prompt Tokens: {usage.prompt_tokens}")
-        print(f"Completion Tokens: {usage.completion_tokens}")
-        print(f"Total Tokens: {usage.total_tokens}")
-    content = response.choices[0].message.content
-    return content
+    result = call(sys_prompt or "", content, profile="vision",
+                  shape=SHAPE_TEXT, images=[img])
+    return result.text
 
 
 if __name__ == "__main__":

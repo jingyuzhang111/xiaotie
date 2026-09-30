@@ -45,9 +45,10 @@ Plutchik的8种基本情感: 喜悦、信任、恐惧、惊讶、悲伤、厌恶
 # }}
 #         """
 
-import openai
 import json
 from typing import Dict,List,Tuple
+
+from src.LLM.client import call, SHAPE_JSON
 import time
 from src.mongodb import *
 from openai.resources.containers.files import content
@@ -84,10 +85,6 @@ class EmotionManager():
         self.response_contents = []      # LLM分析的东西,json转字典,记录不同维度的情感强度
         self.combined_emotions = []     # 复合情感分析结果
         self.mood_delta = {}            # 记录对不同人的好感度与熟悉程度
-        self.client = openai.OpenAI(
-            api_key=LLM_EMOTION_KEY,
-            base_url=LLM_EMOTION_URL,
-        )
         self.emotions = [
             '喜悦','信任','恐惧','惊讶','悲伤','厌恶','愤怒','期待',
         ]
@@ -152,33 +149,14 @@ class EmotionManager():
 ]
 """
 
-        try:
-            start_time = time.time()
-            response = self.client.chat.completions.create(
-                model=LLM_EMOTION_NAME,  # 选择模型
-                messages=[
-                    {"role": "system",
-                     "content": sys_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                extra_body={"thinking": {"type": "disabled"}},
-                temperature=0.0,
-                max_tokens=500,
-            )
-            response_contents = (response.choices[0].message.content or "").strip()
-            llm_time = time.time() - start_time
-            logger.debug(f"LLM推理耗时: {llm_time:.2f}s")
-
-            if not response_contents:
-                logger.warning("情绪分析返回空内容")
-                self.response_contents = []
-                return
-
-            self.response_contents = json.loads(response_contents)
-            logger.info(self.response_contents)
-        except Exception as e:
-            logger.error(f'大模型不懂情感: {e}')
+        # 档位 emotion_batch:一次分析多人,输出的是 JSON **数组**。
+        # 这个档故意不开 force_json —— json_object 模式不接受数组。
+        result = call(sys_prompt, user_prompt, profile="emotion_batch", shape=SHAPE_JSON)
+        if not result.ok:
+            logger.error(f'大模型不懂情感: {result.error}')
             self.response_contents = []
+            return
+        self.response_contents = result.data
 
 
 

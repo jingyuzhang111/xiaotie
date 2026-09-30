@@ -46,6 +46,20 @@ config_dict = {
         "<fg #339af0>api消息</fg #339af0> | "
         "<level>{message}</level>",
         file_format="{time:YYYY-MM-DD HH:mm:ss} | api | {level} | {message}",
+    ),
+    "llm":LogConfig(
+        console_format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+        "<level>{level: <8}</level> | "
+        "<fg #f59f00>LLM调用</fg #f59f00> | "
+        "<level>{message}</level>",
+        file_format="{time:YYYY-MM-DD HH:mm:ss} | LLM | {level} | {message}",
+    ),
+    "prompt":LogConfig(
+        console_format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+        "<level>{level: <8}</level> | "
+        "<fg #845ef7>提示词</fg #845ef7> | "
+        "<level>{message}</level>",
+        file_format="{time:YYYY-MM-DD HH:mm:ss} | PROMPT | {level} | {message}",
     )
 }
 
