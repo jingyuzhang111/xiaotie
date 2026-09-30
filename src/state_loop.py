@@ -53,6 +53,67 @@ def get_eagerness(*, fatigue: float, interest: float) -> float:
     return base * (1.0 - fatigue)
 
 
+def describe_eagerness(value: float) -> str:
+    """转化意愿值为文字描述"""
+    if value >= 0.7:
+        return "你现在挺想聊的"
+    if value >= 0.4:
+        return "你状态还行,看对方说什么"
+    if value >= 0.2:
+        return "你有点疲了,不太想主动接话"
+    return "你现在挺累,或者刚被消息刷过屏,不太想说话"
+
+
+def describe_mood(mood_value: float) -> str:
+    """转化心情值为语气描述(给说话层定调)。心情范围 -50~50,0 为中性"""
+    if mood_value >= 25:
+        return "心情特别好，语气轻快，可以多话一点"
+    if mood_value >= 10:
+        return "心情不错，说话放松一些"
+    if mood_value > -10:
+        return "心情平平，正常说话就行"
+    if mood_value > -25:
+        return "心里有点闷，不太提得起劲"
+    return "心情很糟，话少一点，也不用强装开心"
+
+
+def describe_friend(friend: dict | None) -> str:
+    """
+    把好感度和熟悉度翻译成人话
+
+    两者独立:可能很熟但不喜欢,也可能刚认识就很投缘。
+    好感 -10~10(可为负);熟悉 0~100(只增不减)。
+    """
+    if not friend:
+        return ""
+
+    name = friend.get("name") or "对方"
+    favor = friend.get("favor_ability") or 0
+    relationship = friend.get("relationship_value") or 0
+
+    if favor >= 5:
+        favor_text = "你非常喜欢他"
+    elif favor >= 2:
+        favor_text = "你对他印象不错"
+    elif favor > -2:
+        favor_text = "还说不上喜不喜欢"
+    elif favor > -5:
+        favor_text = "你有点烦他"
+    else:
+        favor_text = "你挺反感他"
+
+    if relationship >= 60:
+        rel_text = "老熟人了"
+    elif relationship >= 30:
+        rel_text = "聊过不少次，算熟"
+    elif relationship >= 10:
+        rel_text = "见过几面，还不太熟"
+    else:
+        rel_text = "基本是生人，别太自来熟"
+
+    return f"你跟{name}的关系：{favor_text}；{rel_text}"
+
+
 def state_snapshot() -> dict:
     """
     取一份完整的当前状态,供决策层和工具使用

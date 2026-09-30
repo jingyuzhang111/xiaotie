@@ -157,6 +157,33 @@ def text_score(text:str, top_k=3):
     return words_important,words
 
 
+def hit_keywords(text: str, known: set[str]) -> list[str]:
+    """
+    从文本里挑出"命中了记忆节点"的词
+
+    为什么不直接用 text_score 的"重要词":
+        这里要找的是"这句话里出现了哪个已有关键词",不是"哪个词最重要",
+        判据完全不同。比如"你还记得轰炸测试吗",按重要词算可能挑出"记得",
+        但真正该命中节点的是"轰炸测试"。
+    """
+    hits: list[str] = []
+
+    # 一、按 jieba 切词匹配(带 static/userdict.txt 里的用户词典)
+    for word in jieba.lcut(text):
+        word = word.strip()
+        if word and word in known and word not in hits:
+            hits.append(word)
+
+    # 二、兜底:节点名直接作为子串出现在文本里
+    #    用户词典没收录"轰炸测试"这类词时,jieba 会把它切成"轰炸"+"测试",
+    #    上面那一步就漏了。子串匹配慢一些,但节点是百这个量级,可以接受。
+    for name in known:
+        if name not in hits and name in text:
+            hits.append(name)
+
+    return hits
+
+
 if __name__ == "__main__":
     test = "并且把表情包描述字段字段字段和你现在的图像理解流程卧槽ccb对齐,1212121,4782。"
 

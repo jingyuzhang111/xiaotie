@@ -49,6 +49,11 @@ def ensure_friend(name):
 	return friend
 
 
+def get_friend(name: str):
+	"""读取好友信息,没有就返回 None(不创建)"""
+	return db_friend.find_one({"name": name})
+
+
 def update_friend(name:str,favor_delta=0.0,relationship_delta=0.0):
 	"""更新好友信息"""
 	friend = ensure_friend(name)

@@ -8,9 +8,12 @@ from src.msgbase import Response, FriendMsg
 from src.globalcontrol import global_control
 from src.config import *
 from src.messagebuffer import message_buffer
-from src.agent.loop import main_loop
+import uuid
+
+from src.agent.think import think
+from src.agent.reply import compose_reply
 from flask_socketio import SocketIO
-from src.state_loop import state_snapshot
+from src.state_loop import describe_eagerness, state_snapshot
 
 socketio = None
 def set_socketio(sio: SocketIO):
@@ -27,6 +30,9 @@ logger = get_module_logger('api')
 
 def msg_process(response:Response):
     
+    # 得到随机的编码，让一条消息在多轮思考中有个统一的标识
+    trace = uuid.uuid4().hex[:6]
+
     # 更新心情值和兴趣值,分析情感,对各个人的感觉记录在emotion_manager.response_contents里,
     moodupdater.update_in_msgloop(response)
 
@@ -35,19 +41,37 @@ def msg_process(response:Response):
 
     # 一次拿齐全状态:拿锁口径统一,以后 eagerness 的定义变了这里也不用动
     snap = state_snapshot()
-    if snap["eagerness"] < REPLY_EAGERNESS_THRESHOLD:
-        logger.info(
-            f"发言意愿偏低 {snap['eagerness']:.3f} < {REPLY_EAGERNESS_THRESHOLD}"
-            f"(接入决策后会跳过这条)"
-        )
+    logger.info(
+        f"意愿 {snap['eagerness']:.3f}（{describe_eagerness(snap['eagerness'])}）"
+        f" —— 只作为参考交给思考层,回不回由它自己判断"
+    )
 
-    agent_state = main_loop(response)
-    if agent_state is None or agent_state.status != "completed":
-        logger.warning("Agent未完成回复，状态: {}", agent_state.status if agent_state else "disabled")
-        logger.warning("生成回复失败，跳过发送")
+    agent_state = think(response, trace=trace)
+
+    if agent_state is None:
+        logger.warning("思考层被关闭(want_thinking=False)，跳过发送")
         return
 
-    response.alter_response(agent_state.final_answer or "")
+    # 主动选择不说话是一个正常结局,不是失败
+    if agent_state.status == "silent":
+        logger.info("这次不说话: {}", agent_state.silent_reason or "(没给理由)")
+        return
+
+    if agent_state.status != "completed":
+        logger.warning(
+            "思考未完成({})，跳过发送: {}",
+            agent_state.status, agent_state.error or "(没有错误信息)",
+        )
+        return
+
+    # 思考层给的是"心里想表达的意思"。这里过一遍说话层,
+    # 连同整条思考链一起交给它,说成人话(失败会自动退回思考层的原话)。
+    reply_text = compose_reply(agent_state, trace=trace)
+    if not reply_text.strip():
+        logger.warning("说话层给了一句空话，跳过发送")
+        return
+
+    response.alter_response(reply_text)
     db_add(response)
 
     response_split = [response.content]

@@ -8,7 +8,7 @@ import json
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from openai import OpenAI, APIStatusError
@@ -58,6 +58,9 @@ class LLMResult:
     attempts: int = 0           # 实际发起了几次请求(0 = 压根没发,比如档位名写错)
     prompt_tokens: int = 0      # 所有尝试的**合计**用量,不是最后一次
     completion_tokens: int = 0
+
+    reasoning: str = ""                         # 思考链(内心独白)
+    tool_calls: list[Any] = field(default_factory=list)   # 模型要求调用的工具
 
 
 _clients: dict[tuple[str, str], OpenAI] = {}
@@ -119,7 +122,8 @@ def _build_kwargs(conf: LLMProfile, shape: str, tools: list[dict] | None) -> dic
         # DeepSeek 关思考链必须走 extra_body,放顶层会被 SDK 拒绝
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
 
-    if conf.force_json:
+    # force_json 和 tools 是互斥的,这里让 tools 优先:
+    if conf.force_json and shape != SHAPE_TOOLS:
         kwargs["response_format"] = {"type": "json_object"}
 
     if shape == SHAPE_TOOLS and tools:
@@ -142,22 +146,25 @@ def _parse_json(result: LLMResult) -> LLMResult:
 
 
 def _log(result: LLMResult, profile: str, shape: str) -> None:
-    """
-    每次调用一条。一条用户消息会触发多次调用,靠 trace 串成一条链,
-    这样出问题时能一眼看出是哪一层。
+    """装饰logger格式，带上 trace / profile / shape / 耗时 / 尝试次数 / token 用量"""
 
-    次数那一列是用来判断"重试值不值"的:
-        1次 ok        -> 一次就成
-        2次 ok        -> 重试救回来了(但如果经常 2 次,说明源头该调)
-        4次 失败      -> 重试完全无效,加大 retries 只是烧钱,该改提示词/开 force_json
-    """
     tokens = f"in {result.prompt_tokens:>4} out {result.completion_tokens:>4}"
     line = (f"trace={result.trace} | {profile:>13} | {shape:<5} | "
             f"{result.elapsed:5.2f}s | {result.attempts}次 | {tokens} |")
-    if result.ok:
-        logger.info(f"{line} ok")
-    else:
+    if not result.ok:
         logger.warning(f"{line} 失败: {result.error}")
+        return
+
+    # 工具档的 text 常常是空的(模型直接要求调工具),只写 ok 看不出它干了什么,
+    # 所以把要调的工具名带上
+    if result.tool_calls:
+        names = ",".join(
+            getattr(getattr(tc, "function", None), "name", "?")
+            for tc in result.tool_calls
+        )
+        logger.info(f"{line} ok 工具[{names}]")
+    else:
+        logger.info(f"{line} ok")
 
 
 def _with_correction(
@@ -176,9 +183,10 @@ def _with_correction(
     ]
 
 def call(
-    system: str,
-    user: str,
+    system: str | None = None,
+    user: str | None = None,
     *,
+    messages: list[ChatCompletionMessageParam] | None = None,
     profile: str = "text",
     shape: str = SHAPE_TEXT,
     tools: list[dict[str, Any]] | None = None,
@@ -190,7 +198,11 @@ def call(
     """
     发一次 LLM 调用
 
-    system / user  提示词
+    system / user  提示词。只在 messages 没给时才用
+    messages       完整对话数组。function calling 的多轮历史必须走这个入口 ——
+                   assistant 的 tool_calls 和后面的 tool 结果是一对一的,
+                   用 system/user 两条消息装不下。
+                   给了它,就忽略 system / user / images(图片直接写进 messages)
     profile        档位名,见 src/LLM/profiles.py
     shape          text | json | tools
     tools          shape="tools" 时的工具 schema(OpenAI 原生格式)
@@ -213,11 +225,16 @@ def call(
             trace=trace,
         )
 
-    messages = _build_messages(system, user, images)
+    # 另起一个名字而不是复用 messages 参数:
+    # 参数的类型是 "list | None",下面要的是确定非 None 的值
+    chat_messages: list[ChatCompletionMessageParam] = (
+        messages if messages is not None
+        else _build_messages(system or "", user or "", images)
+    )
     kwargs = _build_kwargs(conf, shape, tools)
 
     # 用于修正格式不对的返回值
-    attempt_messages = messages
+    attempt_messages = chat_messages
 
     elapsed = 0.0
     last_error = ""
@@ -246,6 +263,11 @@ def call(
                 ok=True,
                 text=(message.content or "").strip(),
                 message=message,
+                # 两个 getattr 都是防御性的:
+                #   reasoning_content 是 DeepSeek 扩展字段,别的服务商没有
+                #   不调工具时 tool_calls 是 None,不是 []
+                reasoning=(getattr(message, "reasoning_content", None) or "").strip(),
+                tool_calls=list(getattr(message, "tool_calls", None) or []),
                 elapsed=elapsed,
                 trace=trace,
                 attempts=attempts,

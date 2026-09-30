@@ -2,6 +2,7 @@ from src.logger import get_module_logger
 
 logger = get_module_logger("tools")
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 from datetime import datetime
@@ -17,6 +18,7 @@ class ToolSpec:
     exposed_to_agent: bool = True
     requires_confirmation: bool = False
     category: str = "general"
+    parameters: dict[str, Any] | None = None
 
 
 _TOOL_REGISTRY: dict[str, ToolSpec] = {}
@@ -29,7 +31,12 @@ def register_tool(
     exposed_to_agent: bool = True,
     requires_confirmation: bool = False,
     category: str = "general",
+    parameters: dict[str, Any] | None = None,
 ):
+    """
+    parameters: 参数的 JSON Schema。不传就从函数签名自动推导。
+                只有需要给参数写语义说明时才手写。
+    """
     def decorator(func: Callable[..., Any]):
         _TOOL_REGISTRY[name] = ToolSpec(
             name=name,
@@ -39,6 +46,7 @@ def register_tool(
             exposed_to_agent=exposed_to_agent,
             requires_confirmation=requires_confirmation,
             category=category,
+            parameters=parameters,
         )
         return func
 
@@ -50,15 +58,23 @@ def tools_init():
 
     @register_tool(
         name="get_chat_history",
-        description="读取指定聊天流的最近历史对话。",
+        description=(
+            "读取跟**当前这个人**的更多历史对话。"
+            "开场已经给过你最近的记录了,只有需要看更早的才用这个。"
+        ),
         category="memory",
     )
-    def get_chat_history(chat_stream: str, limit: int = 20) -> str:
+    def get_chat_history(limit: int = 20) -> str:
+        """读取当前会话更多的历史对话"""
+        from src.agent.state import state
         from src.memory.memory import memory_manager
+
+        if not state.chat_stream:
+            return ""
 
         limit = max(1, min(limit, 50))
         return memory_manager.generate_history_dialog(
-            chat_stream=chat_stream,
+            chat_stream=state.chat_stream,
             limit=limit,
         )
 
@@ -100,17 +116,26 @@ def tools_init():
 
     @register_tool(
         name="recall_memory",
-        description="根据一个话题或记忆节点检索相关记忆。",
+        description=(
+            "顺着一个话题往外想，把相关的旧事都捞出来。"
+            "开场已经自动想起过一批了，只在你觉得还不够、想再挖一挖的时候用。"
+        ),
         category="memory",
     )
-    def recall_related_memory(node_name: str, max_depth: int = 3) -> dict[str, Any]:
+    def recall_related_memory(topic: str, max_depth: int = 2) -> dict[str, Any]:
+
+        from src.memory.memory import hit_keywords
         from src.memory.structure import net_manager
 
-        max_depth = max(1, min(max_depth, 5))
-        nodes = net_manager.get_related_nodes(node_name, max_depth=max_depth)
+        max_depth = max(1, min(max_depth, 4))
+        hits = hit_keywords(topic, set(net_manager.nodenames))
+        if not hits:
+            return {"hits": [], "memories": [],
+                    "note": f"脑子里没有跟「{topic}」对得上的印象"}
+
         return {
-            "nodes": nodes,
-            "memories": net_manager.get_related_memory(nodes),
+            "hits": hits,
+            "memories": net_manager.trigger_by_keywords(hits, max_depth=max_depth),
         }
 
 
@@ -161,6 +186,37 @@ def tools_init():
     )
     def get_current_time() -> str:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+    @register_tool(
+        name="stay_silent",
+        description=(
+            "决定这次不说话。"
+            "适合用:对方只发了个表情、一个没头没尾的字、明显在刷屏,或者你现在确实累了不想接话。"
+            "不适合用:对方问了具体问题、说了重要的事、在向你求助,"
+            "或者你刚好想到了有意思的话题 —— 这些情况即使有点累也应该回复。"
+        ),
+        read_only=True,
+        category="social",
+        # 这个参数需要语义说明,所以不走自动推导,手写一份覆盖它。
+        # 自动推导只能给出 {"reason": {"type": "string"}},
+        # 光看 "reason" 这个名字,模型不知道要写什么。
+        parameters={
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": (
+                        "用第一人称简短说明你为什么不想说话,"
+                        "比如'他只是在刷屏'、'我有点累了'"
+                    ),
+                },
+            },
+        },
+    )
+    def stay_silent(reason: str = "") -> dict[str, Any]:
+        """不回复。reason 会进日志,方便回头看它每次沉默是为什么"""
+        return {"silent": True, "reason": reason}
 
 
     @register_tool(
@@ -245,6 +301,54 @@ def list_tools() -> list[dict[str, Any]]:
         for tool in _TOOL_REGISTRY.values()
         if tool.exposed_to_agent
     ]
+
+"""
+schema: 描述工具需要什么参数来调用。
+"""
+def _schema_from_signature(handler: Callable[..., Any]) -> dict[str, Any]:
+    """
+    从函数的类型标注推导参数的 JSON Schema
+    """
+    json_types: dict[Any, str] = {
+        str: "string", int: "integer", float: "number", bool: "boolean",
+    }
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    for param_name, param in inspect.signature(handler).parameters.items():
+        if param_name in ("self", "cls"):
+            continue
+
+        properties[param_name] = {
+            "type": json_types.get(param.annotation, "string"),
+        }
+        if param.default is inspect.Parameter.empty:
+            required.append(param_name)
+
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
+
+
+def agent_tool_schemas() -> list[dict[str, Any]]:
+    """
+    返回 OpenAI 原生 function calling 需要的 tools 参数:
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters or _schema_from_signature(tool.handler),
+            },
+        }
+        for tool in _TOOL_REGISTRY.values()
+        if tool.exposed_to_agent
+    ]
+
 
 ## 从_TOOL_REGISTRY中执行工具
 def execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:

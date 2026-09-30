@@ -41,10 +41,17 @@ PROFILES: dict[str, LLMProfile] = {
         temperature=0.7, max_tokens=5000, top_p=0.9,
     ),
 
-    # ---- 决策档:Agent 每轮决策 ----
+    # 决策档：
     "decide": LLMProfile(
         key=LLM_TEXT_KEY, base_url=LLM_TEXT_URL, model=LLM_TEXT_NAME,
         temperature=0.7, max_tokens=5000, top_p=0.9, force_json=True,
+    ),
+
+    # 思考档：用于mainloop中循环里的思考层
+    "think": LLMProfile(
+        key=LLM_TEXT_KEY, base_url=LLM_TEXT_URL, model=LLM_TEXT_NAME,
+        temperature=0.7, max_tokens=5000, top_p=0.9,
+        thinking=True, force_json=False,
     ),
 
     # ---- 摘要档:记忆压缩(把一段对话提炼成 summary + keywords)。参数也先保持原样 ----
@@ -66,6 +73,16 @@ PROFILES: dict[str, LLMProfile] = {
     "emotion_batch": LLMProfile(
         key=LLM_EMOTION_KEY, base_url=LLM_EMOTION_URL, model=LLM_EMOTION_NAME,
         temperature=0.1, max_tokens=500, thinking=False, force_json=False,
+    ),
+
+    # ---- 回复档:把决策结果说成人话 ----
+    # 和 decide 的关键差别:
+    #   thinking=False  —— 说话不需要长推理链,开着只会吃 max_tokens 配额、拖慢响应
+    #   temperature=0.8 —— 要有活人感,不能像念稿
+    #   max_tokens=500  —— 回复本来就是短句
+    "reply": LLMProfile(
+        key=LLM_TEXT_KEY, base_url=LLM_TEXT_URL, model=LLM_TEXT_NAME,
+        temperature=0.8, max_tokens=500, thinking=False,
     ),
 
     # ---- 视觉档:图片理解 ----

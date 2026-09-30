@@ -108,8 +108,8 @@ class EmotionManager():
         # 全局设置，若选择使用线程池，则不再一次性输出多个人物的情感分析结果
         if global_control.use_threadpool:
             result = analyze_many_parallel(content)
-            for res in result["results"]:
-                self.response_contents.append(result["results"][res])
+            # 赋值而不是追加:追加会让上一轮的分析结果一直堆在这里
+            self.response_contents = list(result["results"].values())
             return
     
         sys_prompt = """
@@ -168,6 +168,7 @@ class EmotionManager():
         """
         self.combined_emotions.clear()  # 清空之前的复合情感分析结果
         self.mood_delta.clear()  # 清空之前的好感度/熟悉度变化记录
+        self.analyse.clear()     # 之前漏了这句,它只会一直长长
 
         if self.response_contents is None:
             return
@@ -290,6 +291,52 @@ class EmotionManager():
 
 
 emotion_manager = EmotionManager()
+
+
+def _strong_dims(entry: dict, threshold: float = 4.0) -> str:
+    """只挑明显不为零的维度;都没超阈值就退而报主导情感"""
+    strong = [
+        f"{dim}{entry.get(dim, 0):.0f}"
+        for dim in emotion_manager.emotions
+        if isinstance(entry.get(dim), (int, float)) and entry[dim] >= threshold
+    ]
+    if strong:
+        return "、".join(strong)
+
+    dominant = entry.get("dominant")
+    return f"{dominant}（轻微）" if dominant else "没什么起伏"
+
+
+def _combined_names(groups: list) -> str:
+    """复合情感的名字,比 8 个数字具体"""
+    names: list[str] = []
+    for group in groups or []:
+        for item in group or []:
+            cls = item.get("class")
+            if cls and cls not in names:
+                names.append(cls)
+    return "、".join(names)
+
+
+def emotion_report(sender: str = "") -> str:
+    """把这一轮的情绪分析压成给模型看的几句话"""
+    contents = emotion_manager.response_contents or []
+    if not contents:
+        return ""
+
+    lines: list[str] = []
+    for entry in contents:
+        name = entry.get("name")
+        if sender and name == sender:
+            lines.append(f"{sender}此刻的情绪：{_strong_dims(entry)}")
+        elif name == "总消息":
+            lines.append(f"这段对话的氛围：{_strong_dims(entry)}")
+
+    combined = _combined_names(emotion_manager.combined_emotions)
+    if combined:
+        lines.append(f"更具体的感受：{combined}")
+
+    return "\n".join(lines)
 
 if __name__ == '__main__':
     content = history_for_emo("小贴")

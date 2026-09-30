@@ -10,6 +10,12 @@ from typing import Any
 import networkx as nx
 import numpy as np
 
+from src.config import (
+    MEMORY_BUFFER_TTL,
+    MEMORY_EDGE_TTL,
+    MEMORY_NODE_MAX_ITEMS,
+    MEMORY_SPREAD_DEPTH,
+)
 from src.logger import get_module_logger
 logger = get_module_logger("memory-structure")
 
@@ -99,16 +105,17 @@ class Edge:
 def get_node(node):
     """
     从数据库获取节点
-    node的类型:
-        node名字字符串
-        node完整json数据结构
-    从0开始得到节点实例的右拐Node()
+
+    node 可以是节点名字符串,也可以是节点的完整 json
     """
     if isinstance(node, str):
         node_data = db_memory_nodes.find_one({"name": node})
-    if isinstance(node, dict):
+    elif isinstance(node, dict):
         node_data = db_memory_nodes.find_one({"name": node["name"]})
-    
+    else:
+        logger.warning(f"get_node 收到无法识别的节点类型: {type(node)}")
+        return None
+
     if node_data:
         return Node(
             name=node_data["name"],
@@ -201,7 +208,8 @@ class NetManager():
 
 
         # 后处理,清除过期节点,防止内存爆了
-        old_nodes = [n for n in self.nodes_buffer if n.buffer_time < time.time() - 36000]
+        old_nodes = [n for n in self.nodes_buffer
+                     if n.buffer_time < time.time() - MEMORY_BUFFER_TTL]
         for old_node in old_nodes:
             logger.info(f"淘汰: {old_node.name}")
             if old_node.name in self.nodes_buffer_names:
@@ -251,10 +259,11 @@ class NetManager():
 
 
     def update_edges(self, keywords):
-        """对正式节点之间的边进行upsert并累加权重。"""
-
-        # 过滤掉没用的关键词
-        valid_keywords = [k for k in keywords if k in self.nodenames]
+        """
+        对边做 upsert 并累加权重
+        """
+        known = set(self.nodenames) | set(self.nodes_buffer_names)
+        valid_keywords = [k for k in keywords if k in known]
 
         # 遍历存在的关键词, 存储需要改动的边
         _to_change_edge = []
@@ -299,7 +308,8 @@ class NetManager():
         _to_delete_edges = []
         _to_delete_nodes = []
         for edge in self.edges:
-            if edge.last_updated_time + 360000*np.log(edge.weight*np.e) < time.time():
+            # 权重越高活得越久:提过 10 次的边能撑约 330 小时,只提过 1 次的只有 100 小时
+            if edge.last_updated_time + MEMORY_EDGE_TTL*np.log(edge.weight*np.e) < time.time():
                 _to_delete_edges.append(edge)
         for edge in _to_delete_edges:
             self.edges.remove(edge)
@@ -309,7 +319,7 @@ class NetManager():
 
 
         for node in self.nodes:
-            if self.G.degree(node.name) == 0 and node.last_updated_time + 360000 < time.time():
+            if self.G.degree(node.name) == 0 and node.last_updated_time + MEMORY_EDGE_TTL < time.time():
                 _to_delete_nodes.append(node)
 
         for node in _to_delete_nodes:
@@ -331,44 +341,103 @@ class NetManager():
         summary, keywords = self.summarize_node()
         logger.info(f"""总结结果:{summary},\n关键词:{keywords}""")
 
+        if not summary or not keywords:
+            logger.warning("这次没总结出内容,跳过节点更新")
+            return
+
         for keyword in keywords:
-            if keyword not in self.nodenames:
-                k:list = keywords.copy()
-                k.remove(keyword)
-                new_node = Node(name=keyword, content_array=[summary],related_nodes=k)
-                self.should_promote_to_node(new_node)
+            if keyword in self.nodenames:
+                # 已有节点:把这次的总结吸收进去
+                self.absorb(keyword, summary)
+                continue
+
+            k:list = keywords.copy()
+            k.remove(keyword)
+            new_node = Node(name=keyword, content_array=[summary],related_nodes=k)
+            self.should_promote_to_node(new_node)
 
         # 处理边
         self.update_edges(keywords)
-                
+
         # 处理遗忘
         self.forget()
 
 
-    def get_related_nodes(self, node_name, max_depth=3):
-        """获取相邻节点"""
+    def absorb(self, keyword: str, summary: str) -> None:
+        """把这次的总结追加进已有节点,并刷新时间(重复内容只刷新时间)"""
+        if not summary:
+            return
 
+        node = get_node(keyword)
+        if node is None:
+            logger.warning(f"节点 {keyword} 取不到,跳过吸收")
+            return
+
+        if summary in node.content_array:
+            # 每次抽样都落在同一批消息上时,总结出来的话往往一字不差,
+            # 存第二遍只会把提示词撑长
+            node.update()               # 只刷新 last_updated_time
+        else:
+            node.content_array.append(summary)
+            if len(node.content_array) > MEMORY_NODE_MAX_ITEMS:
+                node.content_array = node.content_array[-MEMORY_NODE_MAX_ITEMS:]
+            node.update()
+            logger.info(f"节点 {keyword} 吸收了新记忆,现有 {len(node.content_array)} 条")
+
+        self._sync_memory_node(keyword, node)
+
+
+    def _sync_memory_node(self, keyword: str, node: Node) -> None:
+        """
+        把数据库里那份节点同步回内存里的对象
+
+        absorb 走的是 get_node()(从数据库新读一份),
+        而 self.nodes 里那个是启动时创建的**另一个对象**。
+        不对齐的话,forget() 判过期用的是内存里那份旧数据,
+        刚被提起的节点会被当成垃圾删掉。
+        """
+        for n in self.nodes:
+            if n.name == keyword:
+                n.content_array = list(node.content_array)
+                n.last_updated_time = node.last_updated_time
+                return
+
+
+    def get_related_nodes(self, node_name, max_depth=3):
+        """
+        从 node_name 出发向外**逐层**扩散,返回经过的节点名
+        返回顺序: 层号小的在前;同层内按边权重从大到小。
+        """
         if node_name not in self.G:
             return []
-        
-        # bfs算法
-        visited = set()             # 记录已经走过的节点
-        queue = [(node_name, 0)]    # 
-        out = []
-        while queue:
-            node, d = queue.pop(0)
-            if d >= max_depth:
-                continue
 
-            if node not in visited:
-                visited.add(node)
-                out.append(node)
-            for neighbor in self.G.neighbors(node):
+        visited = {node_name}
+        out = [node_name]           # 第 0 层:种子节点自己
+        frontier = [node_name]
 
+        for _ in range(max_depth):
+            candidates: list[tuple[float, str]] = []
+            for node in frontier:
+                for neighbor in self.G.neighbors(node):
+                    if neighbor in visited:
+                        continue
+                    weight = self.G.edges[node, neighbor].get("weight", 1)
+                    candidates.append((weight, neighbor))
+
+            if not candidates:
+                break       # 扩散完了,提前收工
+
+            # 同层内按权重降序 —— 关系紧的先被想起来
+            candidates.sort(key=lambda item: -item[0])
+
+            frontier = []
+            for _, neighbor in candidates:
                 if neighbor in visited:
                     continue
+                visited.add(neighbor)
+                out.append(neighbor)
+                frontier.append(neighbor)
 
-                queue.append((neighbor, d + 1))
         return out
 
     def get_related_memory(self, nodes_name):
@@ -386,6 +455,33 @@ class NetManager():
                 seen.add(text)
                 related_memory.append(text)
         return related_memory
+
+
+    def trigger_by_keywords(
+        self, keywords: list[str], max_depth: int = MEMORY_SPREAD_DEPTH
+    ) -> list[str]:
+        """
+        听到一些词 → 命中节点 → 以它为中心向外扩散 → 返回回忆到的文本
+        """
+        hits = [k for k in keywords if k in self.G]
+        if not hits:
+            return []
+
+        collected: list[str] = []
+        seen: set[str] = set()
+
+        for hit in hits:
+            nodes = self.get_related_nodes(hit, max_depth=max_depth)
+            for text in self.get_related_memory(nodes):
+                if text in seen:            # 同一个关键词扩散出来的会大量重叠
+                    continue
+                seen.add(text)
+                collected.append(text)
+
+        logger.info(
+            f"记忆激活: 命中 {hits},扩散 {max_depth} 层,唤起 {len(collected)} 条"
+        )
+        return collected
 
 
     # 用于触发回忆,通过关键词触发节点,最终得到记忆并进行整合
