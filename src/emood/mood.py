@@ -3,7 +3,7 @@ import time
 import numpy as np
 from datetime import datetime
 import random
-from src.observer import buffer_time_observer
+from src.observer import time_obsever
 from src.config import *
 from src.emood.emotion import emotion_manager
 from src.msgbase import Msgbase, Response
@@ -18,10 +18,13 @@ class MoodUpdater():
     def __init__(self):
         self.interest_value:float = 0             # 兴趣值，决定回复概率
         self.mood_value:float = 0                 # 心情值，影响回复内容和风格
-        self.timenow = time.time()
-        self.delta_time = 0
         self.mood_lock = threading.RLock()  # 线程锁
-        self.msg_time = []
+
+        self.delta_msg:float = 0            # 当前消息与上一条消息的时差 用于消息更新心情
+        self.delta_idle:float = 0           # 当前时刻与最近一条消息的时差 用于时间更新心情
+
+        self.start_time = time.time()               # 进程启动时刻，还没收到过消息时的兜底基准
+        self.last_msg_time:float | None = None      # 上一次处理消息的时刻，delta_msg 的基准
 
 
     def update_in_timeloop(self, ):
@@ -30,49 +33,52 @@ class MoodUpdater():
         根据消息发送频率更新兴趣值,兴趣值决定回复概率
         根据消息内容和数据库好感更新心情值，心情值改变prompt
         """
-        # with self.mood_lock:
-        self.get_delta_time()
         with self.mood_lock:
-            if self.delta_time > 200:
+            # 每个循环更新一次，根据delta选取衰减率
+            # delta_idle：当前时刻与最近一条消息的时差，用来判断"凉了多久"
+            self.delta_idle = max(0.0, time.time() - self._last_received_time())
+
+            if self.delta_idle > 200:
                 self.interest_value = self.interest_value*INTEREST_DECAY_RATE[1]
                 self.mood_value = self.mood_value * MOOD_DECAY_RATE[1]
-            elif self.delta_time >30:
+            elif self.delta_idle >30:
                 self.interest_value = self.interest_value*INTEREST_DECAY_RATE[0]
                 self.mood_value = self.mood_value * MOOD_DECAY_RATE[0]
-
-            # if average_time > 10:
-            #     self.mood_value = self.mood_value*MOOD_DECAY_RATE[0]
-            # elif average_time > 30:
-            #     self.mood_value = self.mood_value*MOOD_DECAY_RATE[1]
 
             # 保持兴趣0~100,心情-50~50
 
             self._clamp_values()
-            # buffer_time_observer.delete_timelist()
 
 
     def update_in_msgloop(self, response:Response):
         """根据消息触发心理更新"""
 
-        self.get_delta_time()
+        with self.mood_lock:
+            # delta_msg：本次消息与上一次消息的时差
+            # 首次没有上一条基准，记 0（exp(-0) 最大），让首条消息的刺激给满
+            now = time.time()
+            self.delta_msg = 0.0 if self.last_msg_time is None else max(0.0, now - self.last_msg_time)
+            self.last_msg_time = now
+            delta_msg = self.delta_msg
 
-        # 首次得到消息，兴趣值加的最多，往后的刺激递减
-        self.interest_value +=np.exp(-self.delta_time) * 20
+            # 首次得到消息，兴趣值加的最多，往后的刺激递减
+            self.interest_value +=np.exp(-delta_msg/30) * 20
 
         # 情感分析部分/分析结果存储在emotion_manager里
         contents = response.get_emotion_dict()      # 将消息列表转为适用于情感分析的字典格式
-        emotion_manager.LLM_get_emotion(contents)   # LLM分析
+        emotion_manager.LLM_get_emotion(contents)   # 调用LLM
         emotion_manager.analyze_many()              # 综合分析
 
-        mood_delta = emotion_manager.mood_delta
+        mood_delta = dict(emotion_manager.mood_delta)   # 取快照，防止遍历过程中被下一轮分析覆盖
 
         for name, delta in mood_delta.items():
 
             # 总消息用于更新当前心情值
             if name == "总消息":
-                self.mood_value += delta * 5
+                with self.mood_lock:
+                    self.mood_value += delta * 5
             else:
-            # 个人的消息评价用于更新与此人的关系和好感度
+                # 个人的消息评价用于更新与此人的关系和好感度
                 # 好感度与此人的言行有关
                 if delta > 0.5:
                     favor_delta = 0.2
@@ -83,9 +89,10 @@ class MoodUpdater():
 
                 # 熟悉度只与接收消息的频率有关
                 # 熟悉度与好感度是相对独立的，见得多就熟悉，但不一定有好感
-                if self.delta_time < 10:
+                # 用消息间隔 delta_msg，不是空闲时长 delta_idle
+                if delta_msg < 10:
                     rel_delta = 0.1
-                elif self.delta_time < 60:
+                elif delta_msg < 60:
                     rel_delta = 0.05
                 else:
                     rel_delta = 0.02
@@ -101,21 +108,18 @@ class MoodUpdater():
                 logger.info(f"mood_delta:{mood_delta} interest_value:{self.interest_value} favor_delta:{favor_delta} rel_delta:{rel_delta}")
 
         # 最终限制本地值范围
-        self._clamp_values()
+        with self.mood_lock:
+            self._clamp_values()
 
 
-    def get_delta_time(self):
+    def _last_received_time(self) -> float:
         """
-        当前时间 - 上一次缓存出队时间
+        最近一条用户消息的到达时刻
+        time_obsever 记录的是消息到达时间，[-1] 恒为最新一条，不需要猜位置
+        进程启动后还没收到过消息时用启动时刻兜底，等价于"从启动到现在都算空闲"
         """
-        self.timenow = time.time()
-        time_list = buffer_time_observer.get_timelist()
-        
-        # 这里取倒数第二个时间戳,因为执行之前已经把本次时间戳存进去了.
-        if len(time_list) <= 1:
-            self.delta_time = 10000
-        else:
-            self.delta_time = self.timenow - time_list[-2]
+        time_list = time_obsever.get_timelist()
+        return time_list[-1] if time_list else self.start_time
 
 
     def _clamp_values(self):

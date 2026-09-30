@@ -10,8 +10,9 @@ import time
 import threading
 from datetime import datetime
 from src.logger import get_module_logger
-from src.emood.mood import moodupdater
+from src.config import STATE_TICK
 from src.memory.structure import net_manager
+from src.state_loop import update_all_state
 import os
 from src.thread.threadmanager import thread_manager
 from src.messagebuffer import message_buffer
@@ -79,8 +80,11 @@ def index():
 
 def start_threads():
     """启动所有线程"""
+    # 记忆整理是重任务(可能涉及 LLM 和数据库),必须单独一条线程,
+    # 否则会把状态心跳拖成慢循环
     thread_manager.add_tasks(net_manager.memory_process, interval_sec=300)
-    thread_manager.add_tasks(moodupdater.update_in_timeloop, interval_sec=2)
+    # 所有轻量的状态衰减/恢复共用一条心跳线程,见 src/state_loop.py
+    thread_manager.add_tasks(update_all_state, interval_sec=STATE_TICK)
     thread_manager.start()
 
 def restart_threads():

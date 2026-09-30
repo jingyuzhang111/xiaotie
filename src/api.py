@@ -3,12 +3,14 @@ from src.LLM.prompt import create_prompt
 from src.mongodb import *
 from src.split import text_split
 from src.emood.mood import moodupdater
+from src.emood.tired import tiredupdater
 from src.msgbase import Response, FriendMsg
 from src.globalcontrol import global_control
 from src.config import *
 from src.messagebuffer import message_buffer
 from src.agent.loop import main_loop
 from flask_socketio import SocketIO
+from src.state_loop import state_snapshot
 
 socketio = None
 def set_socketio(sio: SocketIO):
@@ -27,6 +29,17 @@ def msg_process(response:Response):
     
     # 更新心情值和兴趣值,分析情感,对各个人的感觉记录在emotion_manager.response_contents里,
     moodupdater.update_in_msgloop(response)
+
+    # 更新疲惫值:消息太密集就让发言意愿打折
+    tiredupdater.update_in_msgloop(response)
+
+    # 一次拿齐全状态:拿锁口径统一,以后 eagerness 的定义变了这里也不用动
+    snap = state_snapshot()
+    if snap["eagerness"] < REPLY_EAGERNESS_THRESHOLD:
+        logger.info(
+            f"发言意愿偏低 {snap['eagerness']:.3f} < {REPLY_EAGERNESS_THRESHOLD}"
+            f"(接入决策后会跳过这条)"
+        )
 
     agent_state = main_loop(response)
     if agent_state is None or agent_state.status != "completed":

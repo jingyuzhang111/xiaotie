@@ -5,7 +5,8 @@ logger = get_module_logger("tools")
 from dataclasses import dataclass
 from typing import Any, Callable
 from datetime import datetime
-
+from src.config import *
+from src.state_loop import state_snapshot
 
 @dataclass
 class ToolSpec:
@@ -13,6 +14,9 @@ class ToolSpec:
     description: str
     handler: Callable[..., Any]
     read_only: bool = True
+    exposed_to_agent: bool = True
+    requires_confirmation: bool = False
+    category: str = "general"
 
 
 _TOOL_REGISTRY: dict[str, ToolSpec] = {}
@@ -22,6 +26,9 @@ def register_tool(
     name: str,
     description: str,
     read_only: bool = True,
+    exposed_to_agent: bool = True,
+    requires_confirmation: bool = False,
+    category: str = "general",
 ):
     def decorator(func: Callable[..., Any]):
         _TOOL_REGISTRY[name] = ToolSpec(
@@ -29,6 +36,9 @@ def register_tool(
             description=description,
             handler=func,
             read_only=read_only,
+            exposed_to_agent=exposed_to_agent,
+            requires_confirmation=requires_confirmation,
+            category=category,
         )
         return func
 
@@ -41,6 +51,7 @@ def tools_init():
     @register_tool(
         name="get_chat_history",
         description="读取指定聊天流的最近历史对话。",
+        category="memory",
     )
     def get_chat_history(chat_stream: str, limit: int = 20) -> str:
         from src.memory.memory import memory_manager
@@ -55,6 +66,8 @@ def tools_init():
     @register_tool(
         name="get_recent_memories",
         description="读取机器人最近保存的记忆。",
+        exposed_to_agent=False,
+        category="memory",
     )
     def get_recent_memories(limit: int = 20) -> list[dict[str, Any]]:
         from src.memory.memory import memory_manager
@@ -76,6 +89,8 @@ def tools_init():
     @register_tool(
         name="get_memory_at_time",
         description="根据时间戳读取一条历史记忆。",
+        exposed_to_agent=False,
+        category="memory",
     )
     def get_memory_at_time(timestamp: float) -> str | None:
         from src.memory.memory import memory_manager
@@ -84,8 +99,9 @@ def tools_init():
 
 
     @register_tool(
-        name="recall_related_memory",
-        description="根据记忆节点名称，读取相关节点和关联记忆。",
+        name="recall_memory",
+        description="根据一个话题或记忆节点检索相关记忆。",
+        category="memory",
     )
     def recall_related_memory(node_name: str, max_depth: int = 3) -> dict[str, Any]:
         from src.memory.structure import net_manager
@@ -101,6 +117,7 @@ def tools_init():
     @register_tool(
         name="get_friend_profile",
         description="读取指定用户的好感度和熟悉度。",
+        category="relationship",
     )
     def get_friend_profile(name: str) -> dict[str, Any] | None:
         from src.mongodb import db_friend
@@ -114,22 +131,18 @@ def tools_init():
 
     @register_tool(
         name="get_internal_state",
-        description="读取当前心情、兴趣和最近一次消息间隔。",
+        description="读取当前心情、兴趣、消息间隔(delta_msg)、空闲时长(delta_idle)、疲惫(fatigue)和发言意愿(eagerness)。",
+        category="state",
     )
     def get_internal_state() -> dict[str, float]:
-        from src.emood.mood import moodupdater
-
-        with moodupdater.mood_lock:
-            return {
-                "mood_value": moodupdater.mood_value,
-                "interest_value": moodupdater.interest_value,
-                "delta_time": moodupdater.delta_time,
-            }
+        # 状态的读取方式统一在 state_loop.state_snapshot 里,这里只管返回
+        return state_snapshot()
 
 
     @register_tool(
         name="get_emotion_analysis",
         description="读取最近一次情绪分析结果。",
+        category="state",
     )
     def get_emotion_analysis() -> dict[str, Any]:
         from src.emood.emotion import emotion_manager
@@ -144,6 +157,7 @@ def tools_init():
     @register_tool(
         name="get_current_time",
         description="获取当前本地时间。",
+        category="system",
     )
     def get_current_time() -> str:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -153,6 +167,9 @@ def tools_init():
         name="update_friend_relationship",
         description="小幅调整用户的好感度和熟悉度。只有在确实发生关系变化时使用。",
         read_only=False,
+        exposed_to_agent=False,
+        requires_confirmation=True,
+        category="relationship",
     )
     def update_friend_relationship(
         name: str,
@@ -178,7 +195,41 @@ def tools_init():
             "relationship_value": relationship,
         }
 
-    logger.info("已注册 {} 个工具", len(_TOOL_REGISTRY))
+    @register_tool(
+        name="speak_text",
+        description="使用当前语音角色朗读一段文本。",
+        read_only=False,
+        exposed_to_agent=False,
+        requires_confirmation=True,
+        category="audio",
+    )
+    def speak_text(text: str) -> dict[str, Any]:
+        from src.plugins.ProcessAudio.readaudio import global_speaker
+
+        if not text.strip():
+            return {"spoken": False, "reason": "文本为空"}
+        global_speaker.speak(text)
+        return {"spoken": True}
+
+    @register_tool(
+        name="analyze_image",
+        description="分析图片内容、情绪和适合的对话场景。",
+        exposed_to_agent=False,
+        requires_confirmation=True,
+        category="image",
+    )
+    def analyze_image(image_path: str) -> str | None:
+        from src.plugins.images.imgmanager import chat_stream as image_chat_stream
+        from src.plugins.images.imgmanager import to_data_url
+
+        image_url = to_data_url(image_path)
+        return image_chat_stream(
+            content="请分析这张图片，并返回结构化的图片描述。",
+            img=image_url,
+            sys_prompt="只描述看得见的内容，不要臆测。",
+        )
+
+    logger.info("已注册 {} 个工具，其中 {} 个向Agent公开", len(_TOOL_REGISTRY), len(list_tools()))
     return list_tools()
 
 
@@ -188,8 +239,11 @@ def list_tools() -> list[dict[str, Any]]:
             "name": tool.name,
             "description": tool.description,
             "read_only": tool.read_only,
+            "requires_confirmation": tool.requires_confirmation,
+            "category": tool.category,
         }
         for tool in _TOOL_REGISTRY.values()
+        if tool.exposed_to_agent
     ]
 
 ## 从_TOOL_REGISTRY中执行工具
@@ -200,6 +254,13 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return {
             "success": False,
             "error": f"工具不存在: {name}",
+        }
+
+    if not tool.exposed_to_agent:
+        return {
+            "success": False,
+            "tool": name,
+            "error": "该工具是内部能力，不能由 Agent 直接调用",
         }
 
     try:
