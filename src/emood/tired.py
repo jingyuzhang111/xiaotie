@@ -1,11 +1,10 @@
 """
-疲惫值(疲劳/厌倦)
+疲惫值
 
-一时间接收太多消息会感觉累，就会休息。
-
-待添加：
-进行其他工作太多也会感觉累
-思考链中调用文件，或者上网查东西太多，或者被让写太久代码，也会累。
+两个来源,方向一致(都是"不想干"),所以对外合成一个值;
+但内部分开记两笔账 —— 恢复速度不一样:
+    chat_load  被消息刷烦了(刺激太多)   恢复快
+    work_load  干活干累了  (调工具、想很多圈) 恢复慢
 """
 import math
 import threading
@@ -21,11 +20,22 @@ logger = get_module_logger("tired")
 
 class TiredUpdater():
     def __init__(self):
-        self.fatigue: float = 0.0      # 疲惫值 0(精神) ~ 1(烦透了)
+        self.chat_load: float = 0.0    # 账本一:被消息刷烦了
+        self.work_load: float = 0.0    # 账本二:干活干累了
         self.rate: float = 0.0         # 最近的消息密度(条/秒),只读观测值
         self.tired_lock = threading.RLock()
         self.start_time = time.time()
         self.last_recover_time = time.time()
+
+    @property
+    def fatigue(self) -> float:
+        """
+        对外只有一个疲惫值
+
+        两个来源本来就同向 —— 她不会"被刷烦了但不累",分开给模型两个词
+        只会让它来回搬。要分开看的只有里面的账。
+        """
+        return min(1.0, self.chat_load + self.work_load)
 
 
     # ------------------------- 密度 -------------------------
@@ -64,23 +74,31 @@ class TiredUpdater():
             if excess <= 0:
                 return
             batch_size = len(getattr(response, "Msgs", ()) or ())
-            self.fatigue += FATIGUE_GAIN * excess * max(1, batch_size)
-            if self.fatigue > 1.0:
-                self.fatigue = 1.0
+            self.chat_load = min(1.0, self.chat_load + FATIGUE_GAIN * excess * max(1, batch_size))
             logger.info(
                 f"消息密集 rate={self.rate:.3f}/s 本批{batch_size}条 "
+                f"chat={self.chat_load:.3f} work={self.work_load:.3f} "
                 f"fatigue={self.fatigue:.3f}"
             )
 
 
-    def update_in_timeloop(self) -> None:
-        """
-        定时循环:疲惫随时间恢复
+    def add_workload(self, amount: float, reason: str = "") -> None:
+        """干了一点活 —— 思考一圈、调一次工具都算"""
+        if amount <= 0:
+            return
+        with self.tired_lock:
+            before = self.work_load
+            self.work_load = min(1.0, self.work_load + amount)
+            if self.work_load - before < 1e-6:
+                return          # 已经到顶了,不用每次刷屏
+            logger.info(
+                f"干活 {reason or '?'} +{amount:.3f} "
+                f"work={self.work_load:.3f} fatigue={self.fatigue:.3f}"
+            )
 
-        用 exp(-Δt/τ),不是"每 tick 乘一个固定值"。
-        后者会让衰减速度跟着 tick 间隔跑偏 —— 这个坑 mood.py 踩过:
-        interval_sec 从 2 改成 5,衰减就快了 2.5 倍。
-        """
+
+    def update_in_timeloop(self) -> None:
+        """定时循环:两笔账各自按 exp(-Δt/τ) 恢复"""
         with self.tired_lock:
             now = time.time()
             tick = max(0.0, now - self.last_recover_time)
@@ -88,8 +106,14 @@ class TiredUpdater():
             self.rate = self.recent_rate()
             if tick <= 0:
                 return
-            self.fatigue *= math.exp(-tick / FATIGUE_RECOVER_TAU)
-            if self.fatigue < 1e-3:
-                self.fatigue = 0.0
+
+            self.chat_load *= math.exp(-tick / FATIGUE_RECOVER_TAU)
+            self.work_load *= math.exp(-tick / FATIGUE_WORK_TAU)
+
+            if self.chat_load < 1e-3:
+                self.chat_load = 0.0
+            if self.work_load < 1e-3:
+                self.work_load = 0.0
+
 
 tiredupdater = TiredUpdater()

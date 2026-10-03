@@ -21,12 +21,14 @@ def _state_steps():
 
     延迟导入:各状态模块不需要知道对方,编排只在这里发生
     """
+    from src.emood.drive import driveupdater
     from src.emood.mood import moodupdater
     from src.emood.tired import tiredupdater
 
     return (
         ("mood", moodupdater.update_in_timeloop),
         ("tired", tiredupdater.update_in_timeloop),
+        ("drive", driveupdater.update_in_timeloop),
     )
 
 
@@ -43,7 +45,7 @@ def update_all_state() -> None:
     logger.info(
         f"状态 | 兴趣 {snap['interest_value']:.2f} 心情 {snap['mood_value']:.2f} "
         f"疲惫 {snap['fatigue']:.3f} 密度 {snap['msg_rate']:.3f}/s "
-        f"意愿 {snap['eagerness']:.3f}"
+        f"意愿 {snap['eagerness']:.3f} 无聊 {snap['boredom']:.3f}"
     )
 
 
@@ -62,6 +64,46 @@ def describe_eagerness(value: float) -> str:
     if value >= 0.2:
         return "你有点疲了,不太想主动接话"
     return "你现在挺累,或者刚被消息刷过屏,不太想说话"
+
+
+def describe_fatigue(fatigue: float) -> str:
+    """转化疲惫值为描述。0 = 精神,1 = 烦透了(消息刷的 + 活干的,合在一起)"""
+    if fatigue >= 0.8:
+        return "你已经很烦了，再多查一件事也提不起劲"
+    if fatigue >= 0.5:
+        return "你有点撑不住了，能少折腾就少折腾"
+    if fatigue >= 0.25:
+        return "你还行，不过已经连着忙了一小阵"
+    return "你挺有精神的"
+
+
+def describe_boredom(boredom: float) -> str:
+    """转化无聊值为描述。0 = 有聊,1 = 无聊透了"""
+    if boredom >= 0.8:
+        return "你一个人待太久了，什么都提不起劲，很想找点事做"
+    if boredom >= 0.5:
+        return "有点无聊了，想干点什么"
+    if boredom >= 0.25:
+        return "还算平静"
+    return "刚聊过天，挺充实的"
+
+
+def human_duration(seconds: float) -> str:
+    """把秒数说成人话,如 90 → '1 分钟'、17400 → '4 小时 50 分'"""
+    if seconds < 60:
+        return "不到 1 分钟"
+
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{max(minutes, 1)} 分钟"
+
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours} 小时" + (f" {minutes} 分" if minutes else "")
+
+    days, hours = divmod(hours, 24)
+    return f"{days} 天" + (f" {hours} 小时" if hours else "")
+
 
 
 def describe_mood(mood_value: float) -> str:
@@ -118,6 +160,7 @@ def state_snapshot() -> dict:
     """
     取一份完整的当前状态,供决策层和工具使用
     """
+    from src.emood.drive import driveupdater
     from src.emood.mood import moodupdater
     from src.emood.tired import tiredupdater
 
@@ -131,6 +174,9 @@ def state_snapshot() -> dict:
         fatigue = tiredupdater.fatigue
         msg_rate = tiredupdater.rate
 
+    with driveupdater.lock:
+        boredom = driveupdater.boredom
+
     return {
         "mood_value": mood_value,
         "interest_value": interest_value,
@@ -138,5 +184,6 @@ def state_snapshot() -> dict:
         "delta_idle": delta_idle,
         "fatigue": fatigue,
         "msg_rate": msg_rate,
+        "boredom": boredom,
         "eagerness": get_eagerness(fatigue=fatigue, interest=interest_value),
     }

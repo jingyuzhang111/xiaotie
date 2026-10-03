@@ -1,7 +1,8 @@
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.config import MAX_THINK_ROUNDS
+from src.config import BOT_NAME, MAX_THINK_ROUNDS
 from src.logger import get_module_logger
 logger = get_module_logger("agent-state")
 
@@ -10,6 +11,9 @@ def _read_input_text(response: Any) -> str:
     """从各种形态的 response 里抠出纯文本"""
     if response is None:
         return ""
+    messages = getattr(response, "Msgs", None)
+    if messages:
+        return "\n".join(str(message.content) for message in messages)
     if hasattr(response, "get_strings"):
         return response.get_strings()
     return str(response)
@@ -61,6 +65,7 @@ class AgentState:
 
     error: str = ""                  # 失败原因
     silent_reason: str = ""          # 主动沉默的理由
+    is_idle: bool = False            # 这一轮是自发(没人找我),不是收到消息
 
     def reset(self, response: Any = None, goal: str | None = None) -> None:
         """
@@ -72,7 +77,11 @@ class AgentState:
         """
         self.input_text = _read_input_text(response)
         self.chat_stream = getattr(response, "chat_stream", None)
-        self.sender_name = getattr(response, "name", "") or ""
+        messages = getattr(response, "Msgs", None) or []
+        self.sender_name = next(
+            (message.name for message in messages if message.name != BOT_NAME),
+            getattr(response, "name", "") or "",
+        )
         self.friend = None
         self.goal = goal or self.input_text
 
@@ -86,6 +95,7 @@ class AgentState:
         self.final_answer = None
         self.error = ""
         self.silent_reason = ""
+        self.is_idle = False
 
     @property
     def last_utterance(self) -> str:
@@ -96,4 +106,17 @@ class AgentState:
         return ""
 
 
-state = AgentState()
+_state_local = threading.local()
+
+
+def current_state() -> AgentState:
+    """
+    当前线程的 AgentState
+
+    每个线程一份:消息处理和自发循环可能同时跑,
+    共用一份的话两边会互相串味 —— 一边 reset 一边读,
+    input_text 和 steps 都会混。
+    """
+    if not hasattr(_state_local, "state"):
+        _state_local.state = AgentState()
+    return _state_local.state

@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from openai import OpenAI, APIStatusError
 from openai.types.chat import (
@@ -172,13 +172,15 @@ def _with_correction(
 ) -> list[ChatCompletionMessageParam]:
     """
     把模型上一次的错答 + 一句纠正要求追加进对话,用来再问一次。
+
+    措辞不特指“不是合法 JSON” —— 出错原因可能是语法,也可能是字段/层级不对。
     """
     return messages + [
         ChatCompletionAssistantMessageParam(role="assistant", content=bad_text),
         ChatCompletionUserMessageParam(
             role="user",
-            content="你上一次的输出不是合法 JSON。请只输出一个 JSON 对象,"
-                    "不要任何其他文字、解释或代码块。",
+            content="你上一次的输出不符合要求。请严格按上面要求的格式"
+                    "重新输出一个 JSON 对象,不要任何其他文字、解释或代码块。",
         ),
     ]
 
@@ -194,6 +196,7 @@ def call(
     trace: str | None = None,
     retries: int = 1,
     timeout: float = 60.0,
+    validate: Callable[[Any], bool] | None = None,
 ) -> LLMResult:
     """
     发一次 LLM 调用
@@ -209,6 +212,9 @@ def call(
     images         data URL 列表;给了就是多模态输入
     trace          链路标识。同一条用户消息触发的多次调用传同一个,日志就能串起来
     retries        失败后的额外重试次数(0 = 不重试)
+    validate       shape="json" 时校验解析结果的结构。返回 False 会当成失败并触发重试。
+                   光靠解析只能保证“是合法 JSON”,保证不了字段对不对 ——
+                   比如模型把输入的形状照抄回来,语法完全合法,结构却是错的。
     """
     trace = trace or uuid.uuid4().hex[:6]
     conf = PROFILES.get(profile)
@@ -278,6 +284,9 @@ def call(
 
             if shape == SHAPE_JSON:
                 result = _parse_json(result)
+                if result.ok and validate is not None and not validate(result.data):
+                    result.ok = False
+                    result.error = "JSON 结构不符合预期"
 
 
             if result.ok:   

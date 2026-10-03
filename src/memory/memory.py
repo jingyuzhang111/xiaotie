@@ -1,4 +1,5 @@
 from src.mongodb import *
+from src.config import HISTORY_GAP_NOTICE
 from src.logger import get_module_logger
 from src.memory.recalltimestamp import MemoryBuildScheduler
 logger = get_module_logger("memory")
@@ -60,6 +61,41 @@ def find_closest_chat(timestamp, length=5):
     return []
 
 
+def render_history(history_list: list[dict]) -> str:
+    """
+    把消息列表渲染成一段背景文本
+
+    每条带一个 HH:MM:够看出消息之间隔了多久,又不像完整时间戳那样抢眼
+    (满屏的秒和日期会让她觉得"时间"是个重要信息,张口就报)。
+    跨天插日期;隔得久的单独标一行,省得她自己算。
+    """
+    from src.state_loop import human_duration
+
+    lines: list[str] = []
+    last_date = None
+    last_ts = None
+    for post in history_list:
+        stamp = str(post.get("time") or "")
+        date = stamp[:10]
+        ts = post.get("timestamp")
+
+        if date and date != last_date:
+            if lines:
+                lines.append("")
+            lines.append(f"--- {date} ---")
+            last_date = date
+        elif isinstance(last_ts, (int, float)) and isinstance(ts, (int, float)):
+            if ts - last_ts >= HISTORY_GAP_NOTICE:
+                lines.append(f"（隔了 {human_duration(ts - last_ts)}）")
+
+        clock = stamp[11:16]
+        lines.append(f"{clock} {post['name']}: {post['content']}" if clock
+                     else f"{post['name']}: {post['content']}")
+        last_ts = ts
+
+    return "\n".join(lines)
+
+
 class MemoryManager():
     def __init__(self):
         pass
@@ -71,11 +107,7 @@ class MemoryManager():
         history.sort("timestamp", -1)
         history_list = list(history)
         history_list.reverse()
-        history_content = '\n'
-        for post in history_list:
-            one_piece = f"[{post['time']}] {post['name']}: {post['content']}\n"
-            history_content += one_piece
-        return history_content
+        return render_history(history_list)
 
     def save_memory(self, msg):
         """保存记忆到数据库"""

@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 
@@ -10,9 +10,11 @@ import time
 import threading
 from datetime import datetime
 from src.logger import get_module_logger
-from src.config import STATE_TICK
+from src.config import IDLE_TICK, STATE_TICK
 from src.memory.structure import net_manager
+from src.msgbase import string_to_hash
 from src.state_loop import update_all_state
+from src.agent.idle import idle_tick
 import os
 from src.thread.threadmanager import thread_manager
 from src.messagebuffer import message_buffer
@@ -78,6 +80,38 @@ def index():
     return "WebSocket Server is Running!"
 
 
+# 前端发的消息 group_name 默认是"电脑本地"(见 msgbase.Msgbase.host_msg_complete),
+# 所以它那个会话的流就是这个 hash
+DEFAULT_STREAM = string_to_hash("电脑本地")
+
+
+@app.route('/history')
+def history():
+    """给前端拉最近的历史对话,按时间正序返回"""
+    try:
+        limit = int(request.args.get('limit', 100))
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(limit, 500))
+
+    rows = list(
+        db_messages.find({"chat_plat": CHAT_PLAT, "chat_stream": DEFAULT_STREAM})
+        .sort("timestamp", -1)
+        .limit(limit)
+    )
+    rows.reverse()      # 取的时候按时间倒序拿最近 N 条,给前端要正序
+
+    logger.info(f"前端拉了 {len(rows)} 条历史")
+    return jsonify([
+        {
+            "name": row.get("name"),
+            "content": row.get("content"),
+            "time": row.get("time"),
+        }
+        for row in rows
+    ])
+
+
 def start_threads():
     """启动所有线程"""
     # 记忆整理是重任务(可能涉及 LLM 和数据库),必须单独一条线程,
@@ -85,6 +119,8 @@ def start_threads():
     thread_manager.add_tasks(net_manager.memory_process, interval_sec=300)
     # 所有轻量的状态衰减/恢复共用一条心跳线程,见 src/state_loop.py
     thread_manager.add_tasks(update_all_state, interval_sec=STATE_TICK)
+    # 自发循环:没人找她的时候,她自己待着、自己找事做
+    thread_manager.add_tasks(idle_tick, interval_sec=IDLE_TICK)
     thread_manager.start()
 
 def restart_threads():

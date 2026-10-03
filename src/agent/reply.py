@@ -72,40 +72,25 @@ def _emotion_block(sender: str) -> str:
 
 def render_thoughts(state: AgentState) -> str:
     """
-    把整条思考链渲染成给回复层看的文本
-
-    为什么完整给、而不是只给最后那句结论:
-        只给结论,回复层看不到"怎么走到的",说出来的话就没有过程感 ——
-        那还是人机感。把独白和查到的结果一起给它,它才知道
-        "我本来以为是 A,一查是 B",自然就会说成"我还以为…结果…"。
-
-    失败的工具调用也照样留着:
-        查不到本身就是信息(可以回"我没查到诶"),抹掉反而失真。
+    给回复层保留操作结果,不传完整内心独白
     """
     if not state.steps:
         return ""
 
-    lines = ["我这次的思考过程："]
+    lines = ["这次已经完成的操作："]
     for step in state.steps:
-        lines.append(f"\n第{step.iteration}圈")
-        if step.reasoning:
-            lines.append(f"  我脑子里在想：{step.reasoning}")
-        if step.utterance and step.utterance != state.final_answer:
-            lines.append(f"  我差点脱口而出：{step.utterance}")
         for tool_call in step.calls:
             args = json.dumps(tool_call.arguments, ensure_ascii=False)
-            lines.append(f"  我去查了 {tool_call.name}，参数是 {args}")
-            # result 是 None 时不能靠 str().strip() 判断空 —— str(None) == "None",
-            # 非空,会渲染成"查到：None",读起来像查到了个叫 None 的东西
             shown = "" if tool_call.result is None else str(tool_call.result).strip()
+            shown = " ".join(shown.split())
+            if len(shown) > 700:
+                shown = shown[:700] + "..."
             if not tool_call.ok:
-                lines.append(f"  但是没查到，出错了：{shown}")
+                lines.append(f"第{step.iteration}轮，{tool_call.name}({args})失败：{shown}")
             elif not shown:
-                # 查了但是空的 —— 这本身也是信息,
-                # 渲染成光秃秃的"查到："会让它不知道到底发生了什么
-                lines.append("  查了，但是什么都没有，是空的")
+                lines.append(f"第{step.iteration}轮，{tool_call.name}({args})返回空结果")
             else:
-                lines.append(f"  查到：{shown}")
+                lines.append(f"第{step.iteration}轮，{tool_call.name}({args})结果：{shown}")
     return "\n".join(lines)
 
 
@@ -138,7 +123,9 @@ def build_reply_prompt(state: AgentState, history: str = "") -> tuple[str, str]:
     blocks.append(
         "上面那些是你自己刚想过的，你已经知道了，"
         "所以不要复述思考过程，不要说“我查了”“我想到”这类话。\n"
-        "现在说出你要说的话。只输出这句话本身。"
+        "现在说出你要说的话。只输出这句话本身。\n"
+        "想分成几句发就换行，换行会变成单独发出去的一条消息；"
+        "一口气说完就不要换行。"
     )
     return SYSTEM_PROMPT, "\n\n".join(blocks)
 

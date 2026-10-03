@@ -27,6 +27,7 @@ class Node:
     content_array: list
     created_time: float 
     last_updated_time: float
+    is_person: bool      # 是不是"人"节点(forget 不删它)
 
     buffer_time: float   # 记录节点被放入buffer的时间, 用于判断是否应该淘汰掉这个节点
 
@@ -35,12 +36,14 @@ class Node:
                  related_nodes: list|None = None,
                  content_array: list|None = None,
                  created_time: float|None = None,
-                 last_updated_time: float|None = None):
+                 last_updated_time: float|None = None,
+                 is_person: bool = False):
         self.name = name
         self.related_nodes = related_nodes if related_nodes is not None else []
         self.content_array = content_array if content_array is not None else []
         self.created_time = created_time if created_time is not None else time.time()
         self.last_updated_time = last_updated_time if last_updated_time is not None else time.time()
+        self.is_person = is_person
         self.buffer_time = time.time()
 
     def update(self):
@@ -56,7 +59,8 @@ class Node:
             "name": self.name,
             # "related_nodes": self.related_nodes,
             "created_time": self.created_time,
-            "last_updated_time": self.last_updated_time
+            "last_updated_time": self.last_updated_time,
+            "is_person": self.is_person,
         }
     
     def to_db(self):
@@ -121,7 +125,8 @@ def get_node(node):
             name=node_data["name"],
             content_array=node_data["content_array"],
             created_time=node_data["created_time"],
-            last_updated_time=node_data["last_updated_time"]
+            last_updated_time=node_data["last_updated_time"],
+            is_person=node_data.get("is_person", False),
         )
     return None
 
@@ -216,6 +221,39 @@ class NetManager():
                 self.nodes_buffer_names.remove(old_node.name)
             if old_node in self.nodes_buffer:
                 self.nodes_buffer.remove(old_node)
+
+
+    def register_person(self, name: str) -> None:
+        """
+        把一个人注册成正式节点;已存在就补上 is_person 标记
+
+        人名不走 buffer 候选 —— 它是确定有意义的,不需要靠"反复提起"来证明自己。
+        """
+        if not name:
+            return
+
+        if name in self.nodenames:
+            node = next((n for n in self.nodes if n.name == name), None)
+            if node and not node.is_person:
+                node.is_person = True
+                db_memory_nodes.update_one({"name": name}, {"$set": {"is_person": True}})
+                logger.info(f"标记人物节点: {name}")
+            return
+
+        node = Node(name=name, is_person=True)
+        node.to_db()
+        self.nodes.append(node)
+        self.nodenames.append(name)
+        self.G.add_node(name, content_array=node.content_array)
+        logger.info(f"注册人物节点: {name}")
+
+
+    def remember_person(self, name: str, text: str) -> None:
+        """记下跟某个人有关的一件事(会自动注册人物节点)"""
+        if not name or not text:
+            return
+        self.register_person(name)
+        self.absorb(name, text)
 
 
     def get_summary_and_keywords(self, string):
@@ -319,6 +357,8 @@ class NetManager():
 
 
         for node in self.nodes:
+            if node.is_person:
+                continue        # 人节点不删
             if self.G.degree(node.name) == 0 and node.last_updated_time + MEMORY_EDGE_TTL < time.time():
                 _to_delete_nodes.append(node)
 

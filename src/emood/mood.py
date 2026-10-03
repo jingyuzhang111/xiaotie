@@ -14,6 +14,24 @@ from src.logger import get_module_logger
 logger = get_module_logger("mood")
 
 
+def _remember_impression(name: str) -> None:
+    """把这一轮对这个人的感受记到 ta 的人物节点上"""
+    impression = ""
+    for entry in emotion_manager.response_contents or []:
+        if entry.get("name") == name:
+            impression = str(entry.get("content") or "").strip()
+            break
+    if not impression:
+        return
+
+    try:
+        from src.memory.structure import net_manager
+
+        net_manager.remember_person(name, impression)
+    except Exception as e:
+        logger.warning(f"写入人物节点失败: {e}")
+
+
 class MoodUpdater():
     def __init__(self):
         self.interest_value:float = 0             # 兴趣值，决定回复概率
@@ -25,6 +43,8 @@ class MoodUpdater():
 
         self.start_time = time.time()               # 进程启动时刻，还没收到过消息时的兜底基准
         self.last_msg_time:float | None = None      # 上一次处理消息的时刻，delta_msg 的基准
+        self._db_baseline:float | None = None       # 数据库里最后一条消息的时刻，缓存
+        self._db_baseline_checked = False
 
 
     def update_in_timeloop(self, ):
@@ -66,6 +86,15 @@ class MoodUpdater():
 
         # 情感分析部分/分析结果存储在emotion_manager里
         contents = response.get_emotion_dict()      # 将消息列表转为适用于情感分析的字典格式
+        from src.agent.tasks import TASK_SENDER
+        contents.pop(TASK_SENDER, None)             # 后台任务结果不是人,不用分析情绪
+
+        # 有人来搭理她了,无聊感消一截
+        if set(contents) - {"总消息"}:
+            from src.emood.drive import driveupdater
+
+            driveupdater.satisfy()
+
         emotion_manager.LLM_get_emotion(contents)   # 调用LLM
         emotion_manager.analyze_many()              # 综合分析
 
@@ -102,6 +131,7 @@ class MoodUpdater():
                 # 写回数据库并约束由 update_friend_metrics 完成
                 try:
                     update_friend(name, favor_delta=favor_delta, relationship_delta=rel_delta)
+                    _remember_impression(name)
                 except Exception as e:
                     logger.error(f"更新好友熟悉度/亲近值失败: {e}")
 
@@ -115,11 +145,35 @@ class MoodUpdater():
     def _last_received_time(self) -> float:
         """
         最近一条用户消息的到达时刻
-        time_obsever 记录的是消息到达时间，[-1] 恒为最新一条，不需要猜位置
-        进程启动后还没收到过消息时用启动时刻兜底，等价于"从启动到现在都算空闲"
+        time_obsever 只记得本次进程收到的消息，重启后是空的。
+        空着就退回数据库里最后一条 —— 不然"上次说话到现在"会被算成"进程跑了多久"
         """
         time_list = time_obsever.get_timelist()
-        return time_list[-1] if time_list else self.start_time
+        if time_list:
+            return time_list[-1]
+        return self._last_from_db() or self.start_time
+
+    def _last_from_db(self) -> float | None:
+        """数据库里最后一条别人发的消息，查到一次就缓存"""
+        if self._db_baseline is not None or self._db_baseline_checked:
+            return self._db_baseline
+
+        try:
+            from src.mongodb import db_messages
+
+            last = db_messages.find_one(
+                {"name": {"$ne": BOT_NAME}}, sort=[("timestamp", -1)],
+            )
+            if last and isinstance(last.get("timestamp"), (int, float)):
+                self._db_baseline = float(last["timestamp"])
+                logger.info(f"空闲基准取自数据库最后一条消息: {last.get('time')}")
+        except Exception as e:
+            # 不置 checked:数据库还没连上时,下个 tick 再试一次
+            logger.warning(f"读数据库基准失败,这次退回进程启动时刻: {e}")
+            return None
+
+        self._db_baseline_checked = True
+        return self._db_baseline
 
 
     def _clamp_values(self):

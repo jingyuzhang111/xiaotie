@@ -6,10 +6,12 @@ import hashlib
 import sys
 import io
 import json
-from src.logger import get_module_logger
 from src.msgbase import Msgbase, FriendMsg
 
-logger = get_module_logger("mongodb")
+from src.logger import LogConfig, get_module_logger
+logger = get_module_logger("mongodb", 
+                           LogConfig(console_level="INFO", file_level="DEBUG"),)
+
 logger.info('Connecting to MongoDB...')
 
 client = MongoClient('mongodb://localhost:27017/')
@@ -30,7 +32,6 @@ def db_add(msg:Msgbase|dict):
 
 	logger.debug(msg.value)
 	db_messages.insert_one(msg.value)
-	logger.info(f"消息已存入数据库, 来自:{msg.name}")
 	ensure_friend(msg.name)
 
 

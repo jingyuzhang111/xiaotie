@@ -174,6 +174,12 @@ class EmotionManager():
             return
 
         for res in self.response_contents:
+            if not isinstance(res, dict) or "name" not in res:
+                # 模型没按格式返回时(比如把输入结构照抄回来),
+                # 这里直接丢掉,不能让后面 res["name"] 把整个消息线程弄崩
+                logger.warning(f"情感分析结果结构不对,跳过: {str(res)[:120]}")
+                continue
+
             emotions = self.emotion_analyze_basic(res)
             if emotions is None:
                 logger.warning("情感分析失败")

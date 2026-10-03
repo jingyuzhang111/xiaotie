@@ -7,3 +7,4 @@ MyFlaskApp.spec
 build/
 src/images/srcs/
 .env
+workspace_AI/
